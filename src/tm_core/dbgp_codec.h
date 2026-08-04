@@ -236,4 +236,43 @@ struct container_info {
 };
 std::optional<std::vector<container_info>> parse_container_info(const response& r);
 
+// debugger primitives
+
+// read_memory (0x300): address then length, both u64. The reply echoes the
+// address before the bytes, so payload = 8 + length.
+std::vector<std::byte> build_read_memory_request_body(std::uint64_t address, std::uint64_t length);
+
+struct memory_block {
+    std::uint64_t          address = 0;
+    std::vector<std::byte> data;
+};
+std::optional<memory_block> parse_read_memory(const response& r);
+
+// read_ppu_registers (0x400): thread id then four per-class selectors, whose
+// widths say what each covers - 32 GPRs, 32 FPRs, the special registers, 32
+// vector registers. Note the u16 in the middle; the body is 22 bytes, not 24.
+struct ppu_register_select {
+    std::uint32_t gpr = 0xffffffffu;
+    std::uint32_t fpr = 0xffffffffu;
+    std::uint16_t spr = 0x00ffu;
+    std::uint32_t vmx = 0xffffffffu;
+};
+
+std::vector<std::byte> build_read_ppu_registers_request_body(
+    std::uint64_t thread_id, const ppu_register_select& select = {});
+
+inline constexpr std::size_t ppu_gpr_count = 32;
+// the reply repeats the selectors before the register file
+inline constexpr std::size_t ppu_registers_prologue = 8 + 28;
+
+struct ppu_registers {
+    std::uint64_t thread_id = 0;
+    std::array<std::uint64_t, ppu_gpr_count> gpr{};
+};
+std::optional<ppu_registers> parse_ppu_registers(const response& r);
+
+// stop_ppu_thread (0x204) and continue_ppu_thread (0x200): the process id rides
+// in the frame header, so the body carries only the thread ids.
+std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> thread_ids);
+
 } // namespace opentm::tm_core::dbgp

@@ -113,3 +113,87 @@ TEST_CASE("DBGP: decode thread_list reply", "[dbgp]") {
     REQUIRE(r->process_id  == 0x01000500u);
     REQUIRE(r->result_code == 0u);
 }
+
+// Bytes below are lifted from pcaps/debugger/stop_program_execution.pcapng,
+// ProDG stopped at a TRAP in cellmark_decr.self.
+TEST_CASE("debugger primitives match the captured frames", "[dbgp]") {
+    using namespace opentm::tm_core::dbgp;
+
+    SECTION("read_memory asks for an address and a length") {
+        const auto body = build_read_memory_request_body(0x10700, 0x100);
+        REQUIRE(body.size() == 16);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x00,0x01,0x07,0x00,
+            0x00,0x00,0x00,0x00,0x00,0x00,0x01,0x00};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("the reply echoes the address, then the bytes") {
+        // ProDG read 0x10700 and the console answered with the prologue of
+        // main() - the same instruction its disassembly pane shows there.
+        response r;
+        r.result_code = 0;
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x01,0x07,0x00,   // address
+                       0xf8,0x21,0xfe,0x61,                        // stdu r1,-0x1a0(r1)
+                       0xfb,0xe1,0x01,0x98}) {
+            r.payload.push_back(std::byte{static_cast<std::uint8_t>(b)});
+        }
+        const auto block = parse_read_memory(r);
+        REQUIRE(block.has_value());
+        CHECK(block->address == 0x10700);
+        REQUIRE(block->data.size() == 8);
+        CHECK(std::to_integer<std::uint8_t>(block->data[0]) == 0xf8);
+        CHECK(std::to_integer<std::uint8_t>(block->data[3]) == 0x61);
+    }
+
+    SECTION("read_ppu_registers is 22 bytes, with a u16 selector in the middle") {
+        const auto body = build_read_ppu_registers_request_body(0x010000c3);
+        REQUIRE(body.size() == 22);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xc3,   // thread id
+            0xff,0xff,0xff,0xff,                        // gpr select
+            0xff,0xff,0xff,0xff,                        // fpr select
+            0x00,0xff,                                  // spr select, u16
+            0xff,0xff,0xff,0xff};                       // vmx select
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("registers land after the echoed selectors") {
+        response r;
+        std::vector<std::uint8_t> raw{
+            0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xc3,   // thread id
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,   // 28 bytes of echoed
+            0xff,0xff,0xff,0xff,0x00,0xff,0x00,0x7f,   // selectors
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,
+            0x00,0x00,0x00,0x00};
+        raw.resize(ppu_registers_prologue, 0);
+        // r0 = 0, r1 = the stack pointer the console reported
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+                       0x00,0x00,0x00,0x00,0xd0,0x10,0x08,0xb0,
+                       0x00,0x00,0x00,0x00,0x00,0x07,0xb0,0xc0}) {
+            raw.push_back(static_cast<std::uint8_t>(b));
+        }
+        raw.resize(ppu_registers_prologue + 32 * 8, 0);
+        for (auto b : raw) r.payload.push_back(std::byte{b});
+
+        const auto regs = parse_ppu_registers(r);
+        REQUIRE(regs.has_value());
+        CHECK(regs->thread_id == 0x010000c3);
+        CHECK(regs->gpr[0] == 0);
+        CHECK(regs->gpr[1] == 0xd01008b0);   // stack
+        CHECK(regs->gpr[2] == 0x0007b0c0);   // TOC
+    }
+
+    SECTION("a thread id list is just the ids") {
+        const std::uint64_t ids[] = {0x010000c3, 0x010000c5, 0x010000c6};
+        const auto body = build_thread_id_list_body(ids);
+        REQUIRE(body.size() == 24);
+        CHECK(std::to_integer<std::uint8_t>(body[7])  == 0xc3);
+        CHECK(std::to_integer<std::uint8_t>(body[15]) == 0xc5);
+        CHECK(std::to_integer<std::uint8_t>(body[23]) == 0xc6);
+    }
+}

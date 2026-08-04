@@ -371,4 +371,55 @@ std::optional<std::vector<container_info>> parse_container_info(const response& 
     return out;
 }
 
+// debugger primitives
+
+std::vector<std::byte> build_read_memory_request_body(std::uint64_t address, std::uint64_t length) {
+    std::vector<std::byte> body;
+    body.reserve(16);
+    append_be_u64(body, address);
+    append_be_u64(body, length);
+    return body;
+}
+
+std::optional<memory_block> parse_read_memory(const response& r) {
+    const auto p = payload_view(r);
+    if (p.size() < 8) return std::nullopt;
+    memory_block out;
+    out.address = read_be_u64(p, 0);
+    out.data.assign(p.begin() + 8, p.end());
+    return out;
+}
+
+std::vector<std::byte> build_read_ppu_registers_request_body(
+    std::uint64_t thread_id, const ppu_register_select& select)
+{
+    std::vector<std::byte> body;
+    body.reserve(22);
+    append_be_u64(body, thread_id);
+    append_be_u32(body, select.gpr);
+    append_be_u32(body, select.fpr);
+    body.push_back(std::byte{static_cast<std::uint8_t>((select.spr >> 8) & 0xff)});
+    body.push_back(std::byte{static_cast<std::uint8_t>(select.spr & 0xff)});
+    append_be_u32(body, select.vmx);
+    return body;
+}
+
+std::optional<ppu_registers> parse_ppu_registers(const response& r) {
+    const auto p = payload_view(r);
+    if (p.size() < ppu_registers_prologue + ppu_gpr_count * 8) return std::nullopt;
+    ppu_registers out;
+    out.thread_id = read_be_u64(p, 0);
+    for (std::size_t i = 0; i < ppu_gpr_count; ++i) {
+        out.gpr[i] = read_be_u64(p, ppu_registers_prologue + i * 8);
+    }
+    return out;
+}
+
+std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> thread_ids) {
+    std::vector<std::byte> body;
+    body.reserve(thread_ids.size() * 8);
+    for (auto id : thread_ids) append_be_u64(body, id);
+    return body;
+}
+
 } // namespace opentm::tm_core::dbgp
