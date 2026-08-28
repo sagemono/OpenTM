@@ -77,6 +77,9 @@ inline constexpr std::uint32_t set_spu_loop           = 0x80000509u;
 inline constexpr std::uint32_t clear_spu_loop         = 0x8000050au;
 inline constexpr std::uint32_t get_data_watchpoint    = 0x80200009u;
 inline constexpr std::uint32_t set_data_watchpoint    = 0x8020000au;
+// stepping is a temporary breakpoint the agent clears when it fires
+inline constexpr std::uint32_t step_ppu_thread        = 0x80200012u;
+inline constexpr std::uint32_t stop_event             = 0x80000b00u;
 
 // extra thread control
 inline constexpr std::uint32_t continue_ppu_thread    = 0x80000200u;

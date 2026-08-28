@@ -197,3 +197,86 @@ TEST_CASE("debugger primitives match the captured frames", "[dbgp]") {
         CHECK(std::to_integer<std::uint8_t>(body[23]) == 0xc6);
     }
 }
+
+TEST_CASE("breakpoints, stepping and the stop event", "[dbgp]") {
+    using namespace opentm::tm_core::dbgp;
+
+    SECTION("setting a breakpoint sends the bare address") {
+        const auto body = build_breakpoint_body(0x0002e118);
+        REQUIRE(body.size() == 8);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x00,0x02,0xe1,0x18};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("the reply echoes the address back") {
+        response r;
+        r.result_code = 0;
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x02,0xe1,0x18}) {
+            r.payload.push_back(std::byte{static_cast<std::uint8_t>(b)});
+        }
+        const auto addr = parse_breakpoint_reply(r);
+        REQUIRE(addr.has_value());
+        CHECK(*addr == 0x0002e118);
+    }
+
+    SECTION("a step is an address and the thread it applies to") {
+        const auto body = build_step_body(0x000106fc, 0x010000df);
+        REQUIRE(body.size() == 16);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x00,0x01,0x06,0xfc,
+            0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xdf};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("the stop event names the thread, the address and the stack") {
+        response r;
+        r.result_code = 0;
+        for (auto b : {0x00,0x00,0x00,0x10, // reason
+                       0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xb4, // thread id
+                       0x00,0x00,0x00,0x00,
+                       0x00,0x00,0x00,0x00,0x00,0x03,0x91,0x10, // address
+                       0x00,0x00,0x00,0x00,0xd0,0x10,0x09,0xb0}) { // stack
+            r.payload.push_back(std::byte{static_cast<std::uint8_t>(b)});
+        }
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(ev->reason == stop_reason_breakpoint);
+        CHECK(ev->thread_id == 0x010000b4);
+        CHECK(ev->address == 0x00039110);
+        CHECK(ev->stack_pointer == 0xd01009b0);
+    }
+
+    SECTION("pc, cr, lr and ctr follow the FPRs") {
+        response r;
+        std::vector<std::uint8_t> raw;
+        raw.resize(ppu_special_offset, 0);
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x01,0x06,0xfc,//pc
+                       0x22,0x00,0x00,0x22, //cr
+                       0x00,0x00,0x00,0x00, //hole
+                       0x00,0x00,0x00,0x00,0x00,0x01,0x04,0xd8,// lr
+                       0x00,0x00,0x00,0x00,0x00,0x19,0x0e,0x7c}) { // ctr
+            raw.push_back(static_cast<std::uint8_t>(b));
+        }
+        for (auto b : raw) r.payload.push_back(std::byte{b});
+
+        const auto regs = parse_ppu_registers(r);
+        REQUIRE(regs.has_value());
+        CHECK(regs->pc  == 0x000106fc);
+        CHECK(regs->cr  == 0x22000022);
+        CHECK(regs->lr  == 0x000104d8);
+        CHECK(regs->ctr == 0x00190e7c);
+    }
+
+    SECTION("a short reply still yields the GPRs it did carry") {
+        response r;
+        r.payload.resize(ppu_registers_prologue + 32 * 8, std::byte{0});
+        const auto regs = parse_ppu_registers(r);
+        REQUIRE(regs.has_value());
+        CHECK(regs->pc == 0);
+    }
+}

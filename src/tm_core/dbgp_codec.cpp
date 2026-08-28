@@ -412,6 +412,19 @@ std::optional<ppu_registers> parse_ppu_registers(const response& r) {
     for (std::size_t i = 0; i < ppu_gpr_count; ++i) {
         out.gpr[i] = read_be_u64(p, ppu_registers_prologue + i * 8);
     }
+
+    const std::size_t fpr_at = ppu_registers_prologue + ppu_gpr_count * 8;
+    if (p.size() < fpr_at + ppu_fpr_count * 8) return out;
+    for (std::size_t i = 0; i < ppu_fpr_count; ++i) {
+        out.fpr[i] = read_be_u64(p, fpr_at + i * 8);
+    }
+
+    // pc, cr, a four byte hole, then lr and ctr
+    if (p.size() < ppu_special_offset + 0x1c) return out;
+    out.pc  = read_be_u64(p, ppu_special_offset + 0x00);
+    out.cr  = read_be_u32(p, ppu_special_offset + 0x08);
+    out.lr  = read_be_u64(p, ppu_special_offset + 0x10);
+    out.ctr = read_be_u64(p, ppu_special_offset + 0x18);
     return out;
 }
 
@@ -420,6 +433,38 @@ std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> 
     body.reserve(thread_ids.size() * 8);
     for (auto id : thread_ids) append_be_u64(body, id);
     return body;
+}
+
+std::vector<std::byte> build_breakpoint_body(std::uint64_t address) {
+    std::vector<std::byte> body;
+    body.reserve(8);
+    append_be_u64(body, address);
+    return body;
+}
+
+std::optional<std::uint64_t> parse_breakpoint_reply(const response& r) {
+    const auto p = payload_view(r);
+    if (p.size() < 8) return std::nullopt;
+    return read_be_u64(p, 0);
+}
+
+std::vector<std::byte> build_step_body(std::uint64_t address, std::uint64_t thread_id) {
+    std::vector<std::byte> body;
+    body.reserve(16);
+    append_be_u64(body, address);
+    append_be_u64(body, thread_id);
+    return body;
+}
+
+std::optional<stop_event> parse_stop_event(const response& r) {
+    const auto p = payload_view(r);
+    if (p.size() < 32) return std::nullopt;
+    stop_event out;
+    out.reason        = read_be_u32(p, 0);
+    out.thread_id     = read_be_u64(p, 4);
+    out.address       = read_be_u64(p, 16);
+    out.stack_pointer = read_be_u64(p, 24);
+    return out;
 }
 
 } // namespace opentm::tm_core::dbgp

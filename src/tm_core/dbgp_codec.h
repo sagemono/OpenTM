@@ -262,17 +262,43 @@ std::vector<std::byte> build_read_ppu_registers_request_body(
     std::uint64_t thread_id, const ppu_register_select& select = {});
 
 inline constexpr std::size_t ppu_gpr_count = 32;
+inline constexpr std::size_t ppu_fpr_count = 32;
 // the reply repeats the selectors before the register file
 inline constexpr std::size_t ppu_registers_prologue = 8 + 28;
+// the special registers sit between the FPRs and the vector file, not at the end
+inline constexpr std::size_t ppu_special_offset =
+    ppu_registers_prologue + (ppu_gpr_count + ppu_fpr_count) * 8;
 
 struct ppu_registers {
     std::uint64_t thread_id = 0;
     std::array<std::uint64_t, ppu_gpr_count> gpr{};
+    std::array<std::uint64_t, ppu_fpr_count> fpr{};
+    std::uint64_t pc  = 0;
+    std::uint32_t cr  = 0;
+    std::uint64_t lr  = 0;
+    std::uint64_t ctr = 0;
 };
 std::optional<ppu_registers> parse_ppu_registers(const response& r);
 
 // stop_ppu_thread (0x204) and continue_ppu_thread (0x200): the process id rides
 // in the frame header, so the body carries only the thread ids.
 std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> thread_ids);
+
+// set_ppu_breakpoint (0x502) and clear_ppu_breakpoint (0x503) both take a bare u64 address and echo it back
+std::vector<std::byte> build_breakpoint_body(std::uint64_t address);
+std::optional<std::uint64_t> parse_breakpoint_reply(const response& r);
+
+// step_ppu_thread (0x200012): a temporary breakpoint at the address the thread should stop on next.
+std::vector<std::byte> build_step_body(std::uint64_t address, std::uint64_t thread_id);
+
+// stop_event (0x80000b00): unsolicited, sent when a thread stops. req_id is 0
+struct stop_event {
+    std::uint32_t reason    = 0;
+    std::uint64_t thread_id = 0;
+    std::uint64_t address   = 0;
+    std::uint64_t stack_pointer = 0;
+};
+inline constexpr std::uint32_t stop_reason_breakpoint = 0x10u;
+std::optional<stop_event> parse_stop_event(const response& r);
 
 } // namespace opentm::tm_core::dbgp
