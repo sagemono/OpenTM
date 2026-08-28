@@ -280,3 +280,73 @@ TEST_CASE("breakpoints, stepping and the stop event", "[dbgp]") {
         CHECK(regs->pc == 0);
     }
 }
+
+TEST_CASE("writing memory and registers", "[dbgp]") {
+    using namespace opentm::tm_core::dbgp;
+
+    SECTION("write_memory is the address then the bytes, with no count") {
+        const std::byte data[] = {std::byte{0xff}};
+        const auto body = build_write_memory_body(0x13337, data);
+        REQUIRE(body.size() == 9);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x00,0x01,0x33,0x37,
+            0xff};
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("a longer write just carries more bytes") {
+        const std::byte data[] = {std::byte{0xde}, std::byte{0xad}, std::byte{0xbe}, std::byte{0xef}};
+        const auto body = build_write_memory_body(0x10700, data);
+        CHECK(body.size() == 12);
+        CHECK(std::to_integer<std::uint8_t>(body[8])  == 0xde);
+        CHECK(std::to_integer<std::uint8_t>(body[11]) == 0xef);
+    }
+
+    SECTION("writing r3 selects bit 3 and nothing else") {
+        const auto body = build_write_ppu_gpr_body(0x010000b4, 3, 0xffffffffffffffffull);
+        REQUIRE(body.size() == 30);
+        const std::vector<std::uint8_t> expected{
+            0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xb4, // thread id
+            0x00,0x00,0x00,0x08, // gpr select, bit 3
+            0x00,0x00,0x00,0x00, // fpr select
+            0x00,0x00,// spr select, u16
+            0x00,0x00,0x00,0x00,// vmx select
+            0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff};// the valuee
+        for (std::size_t i = 0; i < expected.size(); ++i) {
+            CHECK(std::to_integer<std::uint8_t>(body[i]) == expected[i]);
+        }
+    }
+
+    SECTION("selecting several registers appends one value each") {
+        auto select = ppu_register_select::none();
+        select.gpr = 0b1100;   // r2 and r3
+        const std::uint64_t values[] = {0x1111, 0x2222};
+        const auto body = build_write_ppu_registers_body(0x010000b4, select, values);
+        CHECK(body.size() == 22 + 16);
+    }
+
+    SECTION("the echo reports what the agent actually filled in") {
+        // the console accepts seven of the eight special registers asked for
+        response r;
+        std::vector<std::uint8_t> raw{
+            0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xb4, // thread id
+            0xff,0xff,0xff,0xff, // gpr requested
+            0xff,0xff,0xff,0xff, // gpr accepted
+            0xff,0xff,0xff,0xff, // fpr requested
+            0xff,0xff,0xff,0xff, // fpr accepted
+            0x00,0xff,0x00,0x7f, // spr requested, then accepted
+            0xff,0xff,0xff,0xff, // vmx requested
+            0xff,0xff,0xff,0xff};// vmx accepted
+        for (auto b : raw) r.payload.push_back(std::byte{b});
+
+        const auto ack = parse_ppu_register_ack(r);
+        REQUIRE(ack.has_value());
+        CHECK(ack->gpr_requested == 0xffffffff);
+        CHECK(ack->gpr_accepted  == 0xffffffff);
+        CHECK(ack->spr_requested == 0x00ff);
+        CHECK(ack->spr_accepted  == 0x007f);
+        CHECK(ack->vmx_accepted  == 0xffffffff);
+    }
+}

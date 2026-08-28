@@ -256,6 +256,9 @@ struct ppu_register_select {
     std::uint32_t fpr = 0xffffffffu;
     std::uint16_t spr = 0x00ffu;
     std::uint32_t vmx = 0xffffffffu;
+
+    // writes name one register at a time, so they start from nothing selected
+    static constexpr ppu_register_select none() noexcept { return {0, 0, 0, 0}; }
 };
 
 std::vector<std::byte> build_read_ppu_registers_request_body(
@@ -290,6 +293,25 @@ std::optional<std::uint64_t> parse_breakpoint_reply(const response& r);
 
 // step_ppu_thread (0x200012): a temporary breakpoint at the address the thread should stop on next.
 std::vector<std::byte> build_step_body(std::uint64_t address, std::uint64_t thread_id);
+
+struct ppu_register_ack {
+    std::uint32_t gpr_requested = 0, gpr_accepted = 0;
+    std::uint32_t fpr_requested = 0, fpr_accepted = 0;
+    std::uint16_t spr_requested = 0, spr_accepted = 0;
+    std::uint32_t vmx_requested = 0, vmx_accepted = 0;
+};
+std::optional<ppu_register_ack> parse_ppu_register_ack(const response& r);
+
+// write_memory (0x301)
+std::vector<std::byte> build_write_memory_body(std::uint64_t address, std::span<const std::byte> data);
+
+// write_ppu_registers (0x401):
+std::vector<std::byte> build_write_ppu_registers_body(
+    std::uint64_t thread_id, const ppu_register_select& select,
+    std::span<const std::uint64_t> values);
+
+std::vector<std::byte> build_write_ppu_gpr_body(
+    std::uint64_t thread_id, unsigned index, std::uint64_t value);
 
 // stop_event (0x80000b00): unsolicited, sent when a thread stops. req_id is 0
 struct stop_event {

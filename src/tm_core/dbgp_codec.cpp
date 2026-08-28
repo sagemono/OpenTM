@@ -456,6 +456,56 @@ std::vector<std::byte> build_step_body(std::uint64_t address, std::uint64_t thre
     return body;
 }
 
+std::optional<ppu_register_ack> parse_ppu_register_ack(const response& r) {
+    const auto p = payload_view(r);
+    if (p.size() < ppu_registers_prologue) return std::nullopt;
+    ppu_register_ack out;
+    out.gpr_requested = read_be_u32(p, 8);
+    out.gpr_accepted  = read_be_u32(p, 12);
+    out.fpr_requested = read_be_u32(p, 16);
+    out.fpr_accepted  = read_be_u32(p, 20);
+    const auto spr    = read_be_u32(p, 24);
+    out.spr_requested = static_cast<std::uint16_t>(spr >> 16);
+    out.spr_accepted  = static_cast<std::uint16_t>(spr & 0xffffu);
+    out.vmx_requested = read_be_u32(p, 28);
+    out.vmx_accepted  = read_be_u32(p, 32);
+    return out;
+}
+
+std::vector<std::byte> build_write_memory_body(std::uint64_t address, std::span<const std::byte> data)
+{
+    std::vector<std::byte> body;
+    body.reserve(8 + data.size());
+    append_be_u64(body, address);
+    body.insert(body.end(), data.begin(), data.end());
+    return body;
+}
+
+std::vector<std::byte> build_write_ppu_registers_body(
+    std::uint64_t thread_id, const ppu_register_select& select,
+    std::span<const std::uint64_t> values)
+{
+    std::vector<std::byte> body;
+    body.reserve(22 + values.size() * 8);
+    append_be_u64(body, thread_id);
+    append_be_u32(body, select.gpr);
+    append_be_u32(body, select.fpr);
+    body.push_back(std::byte{static_cast<std::uint8_t>((select.spr >> 8) & 0xff)});
+    body.push_back(std::byte{static_cast<std::uint8_t>(select.spr & 0xff)});
+    append_be_u32(body, select.vmx);
+    for (auto v : values) append_be_u64(body, v);
+    return body;
+}
+
+std::vector<std::byte> build_write_ppu_gpr_body(
+    std::uint64_t thread_id, unsigned index, std::uint64_t value)
+{
+    auto select = ppu_register_select::none();
+    select.gpr = 1u << index;
+    const std::uint64_t one[] = {value};
+    return build_write_ppu_registers_body(thread_id, select, one);
+}
+
 std::optional<stop_event> parse_stop_event(const response& r) {
     const auto p = payload_view(r);
     if (p.size() < 32) return std::nullopt;
