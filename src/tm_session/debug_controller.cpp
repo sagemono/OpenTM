@@ -367,7 +367,9 @@ void debug_controller::on_frame_received(opentm::tm_core::deci3_frame f) {
         emit registers_written(p.thread_id, r->result_code);
         break;
     case kind::set_breakpoint:
-        if (r->result_code == 0) breakpoints_.insert(p.address);
+        if (r->result_code == 0 || r->result_code == 0xffffffffu) {
+            breakpoints_.insert(p.address);
+        }
         emit breakpoint_added(p.address, r->result_code);
         break;
     case kind::clear_breakpoint:

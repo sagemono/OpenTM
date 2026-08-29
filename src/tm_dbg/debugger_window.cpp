@@ -22,6 +22,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QSettings>
+#include <QStringList>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -76,9 +77,8 @@ void debugger_window::build_ui() {
     auto* view_menu = menuBar()->addMenu(tr("&View"));
     connect(view_menu, &QMenu::aboutToShow, this, [this, view_menu] {
         view_menu->clear();
-        if (auto* panes = createPopupMenu()) {
-            for (auto* action : panes->actions()) view_menu->addAction(action);
-            panes->deleteLater();
+        for (const auto& id : pane_order()) {
+            if (auto* dock = docks_.value(id)) view_menu->addAction(dock->toggleViewAction());
         }
         view_menu->addSeparator();
         view_menu->addAction(tr("Reset Layout"), this, [this] { reset_layout(); });
@@ -144,6 +144,13 @@ void debugger_window::build_panes() {
     }
     reset_layout();
     restore_layout();
+}
+
+QStringList debugger_window::pane_order() {
+    return {QStringLiteral("pane_registers"), QStringLiteral("pane_memory"),
+            QStringLiteral("pane_callstack"), QStringLiteral("pane_threads"),
+            QStringLiteral("pane_modules"),   QStringLiteral("pane_process"),
+            QStringLiteral("pane_breakpoints"), QStringLiteral("pane_log")};
 }
 
 void debugger_window::reset_layout() {

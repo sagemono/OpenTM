@@ -14,6 +14,8 @@
 #include <QSettings>
 #include <QSizePolicy>
 #include <QToolBar>
+
+#include <algorithm>
 #include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
@@ -168,8 +170,42 @@ void debugger_panel::build_ui() {
     memory_view_->setColumnCount(3);
     memory_view_->setHeaderLabels({tr("Address"), tr("Hex"), tr("ASCII")});
     memory_layout->addWidget(memory_view_, 1);
-    add_pane(tr("Memory"), QStringLiteral("pane_memory"), memory_page,
-             Qt::RightDockWidgetArea);
+    add_pane(tr("Memory"), QStringLiteral("pane_memory"), memory_page, Qt::RightDockWidgetArea);
+
+    auto* bp_page = new QWidget(this);
+    auto* bp_layout = new QVBoxLayout(bp_page);
+    bp_layout->setContentsMargins(2, 2, 2, 2);
+
+    bp_view_ = new QTreeWidget(bp_page);
+    bp_view_->setRootIsDecorated(false);
+    bp_view_->setFont(mono);
+    bp_view_->setColumnCount(2);
+    bp_view_->setHeaderLabels({tr("Address"), tr("Function")});
+    bp_layout->addWidget(bp_view_, 1);
+
+    auto* bp_bar = new QHBoxLayout;
+    auto* bp_remove = new QPushButton(tr("Remove"), bp_page);
+    auto* bp_remove_all = new QPushButton(tr("Remove All"), bp_page);
+    bp_bar->addWidget(bp_remove);
+    bp_bar->addWidget(bp_remove_all);
+    bp_bar->addStretch(1);
+    bp_edit_ = new QLineEdit(bp_page);
+    bp_edit_->setPlaceholderText(QStringLiteral("0x48564"));
+    bp_edit_->setMaximumWidth(140);
+    bp_bar->addWidget(bp_edit_);
+    auto* bp_clear_at = new QPushButton(tr("Clear at Address"), bp_page);
+    bp_bar->addWidget(bp_clear_at);
+    bp_layout->addLayout(bp_bar);
+
+    add_pane(tr("Breakpoints"), QStringLiteral("pane_breakpoints"), bp_page,
+             Qt::BottomDockWidgetArea);
+
+    connect(bp_remove, &QPushButton::clicked, this, &debugger_panel::remove_selected_breakpoint);
+    connect(bp_remove_all, &QPushButton::clicked, this, &debugger_panel::remove_all_breakpoints);
+    connect(bp_clear_at, &QPushButton::clicked, this, &debugger_panel::clear_typed_breakpoint);
+    connect(bp_edit_, &QLineEdit::returnPressed, this, &debugger_panel::clear_typed_breakpoint);
+    connect(bp_view_, &QTreeWidget::itemDoubleClicked, this,
+            [this](QTreeWidgetItem*, int) { breakpoint_activated(); });
 
     log_view_ = new QPlainTextEdit(this);
     log_view_->setReadOnly(true);
@@ -194,6 +230,56 @@ void debugger_panel::build_ui() {
 }
 
 QWidget* debugger_panel::code_widget() const { return code_view_; }
+
+void debugger_panel::refresh_breakpoints() {
+    if (!bp_view_) return;
+    bp_view_->clear();
+    auto sorted = breakpoints_.values();
+    std::sort(sorted.begin(), sorted.end());
+    for (auto address : sorted) {
+        auto* item = new QTreeWidgetItem(bp_view_);
+        item->setData(0, Qt::UserRole, QVariant::fromValue<qulonglong>(address));
+        item->setText(0, hex64(address));
+        item->setText(1, symbol_for(address));
+    }
+    for (int c = 0; c < bp_view_->columnCount(); ++c) bp_view_->resizeColumnToContents(c);
+}
+
+void debugger_panel::remove_selected_breakpoint() {
+    const auto* item = bp_view_->currentItem();
+    if (!item) return;
+    bool ok = false;
+    const auto address = item->data(0, Qt::UserRole).toULongLong(&ok);
+    if (ok && address != 0) emit breakpoint_clear_requested(address);
+}
+
+void debugger_panel::remove_all_breakpoints() {
+    const auto all = breakpoints_;
+    for (auto address : all) emit breakpoint_clear_requested(address);
+}
+
+void debugger_panel::clear_typed_breakpoint() {
+    auto text = bp_edit_->text().trimmed();
+    if (text.isEmpty()) return;
+    if (text.startsWith(QStringLiteral("0x"), Qt::CaseInsensitive)) text = text.mid(2);
+    bool ok = false;
+    const auto address = text.toULongLong(&ok, 16);
+    if (!ok) {
+        emit log_message(tr("!! debugger: '%1' is not a hex address").arg(bp_edit_->text()));
+        return;
+    }
+    emit log_message(tr("-- clearing any breakpoint at %1").arg(hex64(address)));
+    emit breakpoint_clear_requested(address);
+    bp_edit_->clear();
+}
+
+void debugger_panel::breakpoint_activated() {
+    const auto* item = bp_view_->currentItem();
+    if (!item) return;
+    bool ok = false;
+    const auto address = item->data(0, Qt::UserRole).toULongLong(&ok);
+    if (ok && address != 0) show_code_at(address);
+}
 
 void debugger_panel::append_log_line(const QString& line) {
     if (log_view_) log_view_->appendPlainText(line);
@@ -457,17 +543,25 @@ void debugger_panel::toggle_breakpoint_here() {
 }
 
 void debugger_panel::on_breakpoint_added(quint64 address, quint32 status) {
+    if (status == 0xffffffffu) {
+        breakpoints_.insert(address);
+        emit log_message(tr("-- a breakpoint was already set at %1 (left from an earlier session); it is listed now, press again to remove it").arg(hex64(address)));
+        redraw_disassembly();
+        return;
+    }
     if (status != 0) {
         emit log_message(tr("    !! debugger: breakpoint at %1 refused (0x%2)").arg(hex64(address)).arg(status, 8, 16, QChar('0')));
         return;
     }
     breakpoints_.insert(address);
+    refresh_breakpoints();
     redraw_disassembly();
 }
 
 void debugger_panel::on_breakpoint_removed(quint64 address, quint32 status) {
     if (status != 0) return;
     breakpoints_.remove(address);
+    refresh_breakpoints();
     redraw_disassembly();
 }
 
@@ -513,6 +607,7 @@ void debugger_panel::step_into() {
         }
     }
     emit log_message(tr("-- step into from %1").arg(hex64(pc_)));
+    step_from_ = pc_;
     emit step_requested(thread_id_, targets);
     status_->setText(tr("stepping from %1...").arg(hex64(pc_)));
 }
@@ -528,6 +623,7 @@ void debugger_panel::step_over() {
         return;
     }
     emit log_message(tr("-- step over from %1 to %2").arg(hex64(pc_), hex64(*dest)));
+    step_from_ = pc_;
     emit step_requested(thread_id_, QList<quint64>{*dest});
     status_->setText(tr("stepping from %1...").arg(hex64(pc_)));
 }
@@ -551,6 +647,15 @@ void debugger_panel::do_halt() {
 }
 
 void debugger_panel::on_thread_stopped(quint64 thread_id, quint64 address, quint32 reason) {
+    if (step_from_ != 0 && address == step_from_) {
+        step_from_ = 0;
+        emit log_message(tr("!! a breakpoint at %1 stops the thread as soon as it starts, so the step cannot move. Removing it - set it again if you want it.").arg(hex64(address)));
+        breakpoints_.remove(address);
+        emit breakpoint_clear_requested(address);
+    } else {
+        step_from_ = 0;
+    }
+
     thread_id_ = thread_id;
     pc_        = address;
     stopped_   = true;
@@ -803,6 +908,7 @@ void debugger_panel::on_session_invalidated() {
     reported_thread_ = 0;
     reported_state_  = 0xffffffffu;
     breakpoints_.clear();
+    refresh_breakpoints();
     insns_.clear();
     code_.clear();
     have_regs_ = false;

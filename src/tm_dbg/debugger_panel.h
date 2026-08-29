@@ -95,6 +95,11 @@ private:
     void do_halt();
     void edit_register(int row, int column);
     void thread_selected();
+    void refresh_breakpoints();
+    void remove_selected_breakpoint();
+    void remove_all_breakpoints();
+    void clear_typed_breakpoint();
+    void breakpoint_activated();
     void request_callstack();
     void show_callstack(quint64 base, const QByteArray& stack);
     void stack_frame_activated();
@@ -133,6 +138,7 @@ private:
     quint64 stack_top_ = 0;
     std::optional<opentm::tm_core::ppc_insn> pc_insn_;
     quint64 focus_address_ = 0;
+    quint64 step_from_ = 0;
 
     bool                                 have_regs_ = false;
 
@@ -144,6 +150,8 @@ private:
     QTreeWidget*    process_view_ = nullptr;
     QTreeWidget*    stack_view_   = nullptr;
     QTreeWidget*    memory_view_  = nullptr;
+    QTreeWidget*    bp_view_      = nullptr;
+    QLineEdit*      bp_edit_      = nullptr;
     QLineEdit*      memory_edit_  = nullptr;
     QLabel*         status_       = nullptr;
     QPushButton*    resume_btn_   = nullptr;

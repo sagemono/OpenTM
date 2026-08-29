@@ -7,6 +7,7 @@
 #include <QHash>
 #include <QMainWindow>
 #include <QString>
+#include <QStringList>
 
 #include <cstdint>
 
@@ -39,6 +40,7 @@ private:
     void save_layout();
     void restore_layout();
     void reset_layout();
+    static QStringList pane_order();
     target_record selected_target() const;
     void wire_session();
     void ask_for_process_list();
