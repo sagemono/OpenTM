@@ -20,9 +20,11 @@ class QAction;
 class QLabel;
 class QLineEdit;
 class QPlainTextEdit;
+class QPlainTextEdit;
 class QPushButton;
 class QTableWidget;
 class QTabWidget;
+class QToolBar;
 class QTreeWidget;
 class QTreeWidgetItem;
 
@@ -32,6 +34,17 @@ class debugger_panel : public QWidget {
     Q_OBJECT
 public:
     explicit debugger_panel(QWidget* parent = nullptr);
+    struct pane_spec {
+        QString            title;
+        QString            id;
+        QWidget*           body = nullptr;
+        Qt::DockWidgetArea area = Qt::BottomDockWidgetArea;
+    };
+    const QList<pane_spec>& panes() const { return panes_; }
+    QToolBar* run_toolbar() const { return toolbar_; }
+    QWidget*  code_widget() const;
+
+    void append_log_line(const QString& line);
     bool load_symbols(const QString& path, QString* error = nullptr);
     bool has_symbols() const { return !symbols_.empty(); }
 
@@ -70,6 +83,7 @@ signals:
 
 private:
     void build_ui();
+    void add_pane(const QString& title, const QString& id, QWidget* body, Qt::DockWidgetArea area);
     void refresh_actions();
     void go_to_address();
     void show_code_at(quint64 address);
@@ -137,6 +151,9 @@ private:
     QPushButton*    step_into_btn_ = nullptr;
     QPushButton*    step_over_btn_ = nullptr;
     QPushButton*    bp_btn_        = nullptr;
+    QPlainTextEdit* log_view_      = nullptr;
+    QList<pane_spec> panes_;
+    QToolBar*        toolbar_ = nullptr;
 };
 
 } // namespace opentm::tm_ui

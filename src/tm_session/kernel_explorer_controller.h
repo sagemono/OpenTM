@@ -60,6 +60,7 @@ private:
         std::uint32_t cmd = 0;
         std::uint32_t pid = 0;
         std::uint32_t handle = 0;
+        std::uint32_t round = 0;
     };
 
     template <class Info>
@@ -69,13 +70,13 @@ private:
         QList<Info> info;
     };
 
-    std::uint32_t send_dbgp(std::uint32_t cmd, std::uint32_t pid, const std::vector<std::byte>& body, std::uint32_t handle = 0);
+    std::uint32_t send_dbgp(std::uint32_t cmd, std::uint32_t pid, const std::vector<std::byte>& body, std::uint32_t handle = 0, std::uint32_t round = 0);
 
     void on_process_list_reply(const opentm::tm_core::dbgp::response& r);
     void on_process_info_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid);
     void on_user_memory_stat_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid);
     void on_thread_list_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid);
-    void on_thread_info_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid, std::uint64_t tid);
+    void on_thread_info_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid, std::uint64_t tid, std::uint32_t round);
     template <class Info>
     void on_info_list_reply(const opentm::tm_core::dbgp::response& r, std::uint32_t pid, std::uint32_t info_cmd, QList<std::uint32_t>& expected_set, QList<Info>& accumulator);
     template <class Info>
@@ -99,6 +100,7 @@ private:
         std::uint32_t pid = 0;
         int expected = 0;
         int received = 0;
+        std::uint32_t round = 0;
         QList<opentm::tm_core::dbgp::ppu_thread_info> info;
     } threads_state_;
 

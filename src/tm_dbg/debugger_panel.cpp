@@ -8,7 +8,12 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QPalette>
+#include <QPlainTextEdit>
 #include <QPushButton>
+#include <QDockWidget>
+#include <QSettings>
+#include <QSizePolicy>
+#include <QToolBar>
 #include <QSplitter>
 #include <QStringList>
 #include <QTabWidget>
@@ -54,23 +59,33 @@ constexpr std::uint32_t thread_state_stop = 6;
 } // namespace
 
 debugger_panel::debugger_panel(QWidget* parent) : QWidget(parent) {
+    hide();
     build_ui();
     refresh_actions();
 }
 
-void debugger_panel::build_ui() {
-    auto* root = new QVBoxLayout(this);
+void debugger_panel::add_pane(const QString& title, const QString& id, QWidget* body, Qt::DockWidgetArea area)
+{
+    panes_.append(pane_spec{title, id, body, area});
+}
 
-    auto* bar = new QHBoxLayout;
-    bar->addWidget(new QLabel(tr("Address"), this));
+void debugger_panel::build_ui() {
+    const auto mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
+
+    auto* bar = new QToolBar(tr("Run"), this);
+    toolbar_ = bar;
+    bar->setObjectName(QStringLiteral("run_toolbar"));
+    bar->setMovable(false);
+    bar->addWidget(new QLabel(tr("Address "), this));
+
     address_edit_ = new QLineEdit(this);
     address_edit_->setPlaceholderText(QStringLiteral("0x10700"));
-    address_edit_->setMaximumWidth(160);
+    address_edit_->setMaximumWidth(180);
     bar->addWidget(address_edit_);
 
     auto* go = new QPushButton(tr("Go"), this);
     bar->addWidget(go);
-    bar->addSpacing(12);
+    bar->addSeparator();
 
     resume_btn_    = new QPushButton(tr("Resume"), this);
     halt_btn_      = new QPushButton(tr("Halt"), this);
@@ -80,72 +95,63 @@ void debugger_panel::build_ui() {
     for (auto* b : {resume_btn_, halt_btn_, step_into_btn_, step_over_btn_, bp_btn_}) {
         bar->addWidget(b);
     }
-    bar->addStretch(1);
+
+    auto* spacer = new QWidget(this);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    bar->addWidget(spacer);
     status_ = new QLabel(this);
     bar->addWidget(status_);
-    root->addLayout(bar);
 
-    auto* split = new QSplitter(Qt::Horizontal, this);
-
-    const auto mono = QFontDatabase::systemFont(QFontDatabase::FixedFont);
-
-    code_view_ = new QTreeWidget(split);
+    code_view_ = new QTreeWidget(this);
     code_view_->setRootIsDecorated(false);
     code_view_->setUniformRowHeights(true);
     code_view_->setFont(mono);
     code_view_->setColumnCount(5);
-    code_view_->setHeaderLabels({QString(), tr("Address"), tr("Opcode"), tr("Disassembly"), tr("Function")});
+    code_view_->setHeaderLabels({QString(), tr("Address"), tr("Opcode"),
+                                 tr("Disassembly"), tr("Function")});
     code_view_->header()->setStretchLastSection(true);
     code_view_->setColumnWidth(col_marker, 28);
     code_view_->setColumnWidth(col_address, 150);
     code_view_->setColumnWidth(col_opcode, 90);
-    split->addWidget(code_view_);
 
-    auto* side = new QWidget(split);
-    auto* side_layout = new QVBoxLayout(side);
-    side_layout->setContentsMargins(0, 0, 0, 0);
-
-    side_layout->addWidget(new QLabel(tr("Registers"), side));
-    regs_view_ = new QTableWidget(side);
+    regs_view_ = new QTableWidget(this);
     regs_view_->setFont(mono);
     regs_view_->setColumnCount(2);
     regs_view_->setHorizontalHeaderLabels({tr("Register"), tr("Value")});
     regs_view_->verticalHeader()->setVisible(false);
     regs_view_->horizontalHeader()->setStretchLastSection(true);
     regs_view_->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    side_layout->addWidget(regs_view_, 3);
+    add_pane(tr("Registers"), QStringLiteral("pane_registers"), regs_view_, Qt::RightDockWidgetArea);
 
-    auto* tabs = new QTabWidget(side);
-
-    threads_view_ = new QTreeWidget(tabs);
-    threads_view_->setRootIsDecorated(false);
-    threads_view_->setColumnCount(5);
-    threads_view_->setHeaderLabels({tr("Thread"), tr("State"), tr("Name"), tr("Priority"), tr("Stack")});
-    tabs->addTab(threads_view_, tr("Threads"));
-
-    modules_view_ = new QTreeWidget(tabs);
-    modules_view_->setRootIsDecorated(false);
-    modules_view_->setColumnCount(5);
-    modules_view_->setHeaderLabels({tr("Module"), tr("Attrib"), tr("Start"),
-                                    tr("Stop"), tr("Size")});
-    tabs->addTab(modules_view_, tr("Modules"));
-
-    process_view_ = new QTreeWidget(tabs);
-    process_view_->setRootIsDecorated(false);
-    process_view_->setColumnCount(2);
-    process_view_->setHeaderLabels({tr("Property"), tr("Value")});
-    tabs->addTab(process_view_, tr("Process"));
-
-    stack_view_ = new QTreeWidget(tabs);
+    stack_view_ = new QTreeWidget(this);
     stack_view_->setRootIsDecorated(false);
     stack_view_->setFont(mono);
     stack_view_->setColumnCount(4);
     stack_view_->setHeaderLabels({tr("#"), tr("Address"), tr("Function"), tr("Frame")});
-    tabs->insertTab(0, stack_view_, tr("Callstack"));
+    add_pane(tr("Callstack"), QStringLiteral("pane_callstack"), stack_view_, Qt::BottomDockWidgetArea);
 
-    auto* memory_page = new QWidget(tabs);
+    threads_view_ = new QTreeWidget(this);
+    threads_view_->setRootIsDecorated(false);
+    threads_view_->setColumnCount(5);
+    threads_view_->setHeaderLabels({tr("Thread"), tr("State"), tr("Name"), tr("Priority"), tr("Stack")});
+    add_pane(tr("Threads"), QStringLiteral("pane_threads"), threads_view_, Qt::BottomDockWidgetArea);
+
+    modules_view_ = new QTreeWidget(this);
+    modules_view_->setRootIsDecorated(false);
+    modules_view_->setColumnCount(5);
+    modules_view_->setHeaderLabels({tr("Module"), tr("Attrib"), tr("Start"), tr("Stop"), tr("Size")});
+    add_pane(tr("Modules"), QStringLiteral("pane_modules"), modules_view_, Qt::BottomDockWidgetArea);
+
+    process_view_ = new QTreeWidget(this);
+    process_view_->setRootIsDecorated(false);
+    process_view_->setColumnCount(2);
+    process_view_->setHeaderLabels({tr("Property"), tr("Value")});
+    add_pane(tr("Process"), QStringLiteral("pane_process"),
+                                  process_view_, Qt::BottomDockWidgetArea);
+
+    auto* memory_page = new QWidget(this);
     auto* memory_layout = new QVBoxLayout(memory_page);
-    memory_layout->setContentsMargins(0, 0, 0, 0);
+    memory_layout->setContentsMargins(2, 2, 2, 2);
     auto* memory_bar = new QHBoxLayout;
     memory_bar->addWidget(new QLabel(tr("Address"), memory_page));
     memory_edit_ = new QLineEdit(memory_page);
@@ -162,20 +168,17 @@ void debugger_panel::build_ui() {
     memory_view_->setColumnCount(3);
     memory_view_->setHeaderLabels({tr("Address"), tr("Hex"), tr("ASCII")});
     memory_layout->addWidget(memory_view_, 1);
-    tabs->addTab(memory_page, tr("Memory"));
+    add_pane(tr("Memory"), QStringLiteral("pane_memory"), memory_page,
+             Qt::RightDockWidgetArea);
+
+    log_view_ = new QPlainTextEdit(this);
+    log_view_->setReadOnly(true);
+    log_view_->setMaximumBlockCount(5000);
+    add_pane(tr("Log"), QStringLiteral("pane_log"), log_view_, Qt::BottomDockWidgetArea);
 
     connect(memory_go, &QPushButton::clicked, this, &debugger_panel::go_to_memory);
     connect(memory_edit_, &QLineEdit::returnPressed, this, &debugger_panel::go_to_memory);
-    tabs->setCurrentIndex(0);
     connect(stack_view_, &QTreeWidget::itemSelectionChanged, this, &debugger_panel::stack_frame_activated);
-
-    side_layout->addWidget(tabs, 2);
-
-    split->addWidget(side);
-    split->setStretchFactor(0, 3);
-    split->setStretchFactor(1, 2);
-    root->addWidget(split, 1);
-
     connect(go, &QPushButton::clicked, this, &debugger_panel::go_to_address);
     connect(address_edit_, &QLineEdit::returnPressed, this, &debugger_panel::go_to_address);
     connect(resume_btn_, &QPushButton::clicked, this, &debugger_panel::do_resume);
@@ -187,6 +190,13 @@ void debugger_panel::build_ui() {
     connect(regs_view_, &QTableWidget::cellDoubleClicked, this, &debugger_panel::edit_register);
     connect(code_view_, &QTreeWidget::itemSelectionChanged, this, &debugger_panel::refresh_actions);
     connect(threads_view_, &QTreeWidget::itemSelectionChanged, this, &debugger_panel::thread_selected);
+
+}
+
+QWidget* debugger_panel::code_widget() const { return code_view_; }
+
+void debugger_panel::append_log_line(const QString& line) {
+    if (log_view_) log_view_->appendPlainText(line);
 }
 
 void debugger_panel::set_supported(bool on, const QString& why) {

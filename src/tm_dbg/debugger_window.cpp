@@ -17,8 +17,11 @@
 #include <QJsonArray>
 #include <QLineEdit>
 #include <tm_session/rpc_client.h>
+#include <QMenu>
+#include <QMenuBar>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSettings>
 #include <QStatusBar>
 #include <QToolBar>
 #include <QVBoxLayout>
@@ -69,15 +72,17 @@ void debugger_window::build_ui() {
     connect(target_box_->lineEdit(), &QLineEdit::returnPressed, this, &debugger_window::attach);
 
     panel_ = new debugger_panel(this);
-    setCentralWidget(panel_);
-
-    auto* dock = new QDockWidget(tr("Log"), this);
-    dock->setObjectName(QStringLiteral("log_dock"));
-    log_ = new QPlainTextEdit(dock);
-    log_->setReadOnly(true);
-    log_->setMaximumBlockCount(5000);
-    dock->setWidget(log_);
-    addDockWidget(Qt::BottomDockWidgetArea, dock);
+    build_panes();
+    auto* view_menu = menuBar()->addMenu(tr("&View"));
+    connect(view_menu, &QMenu::aboutToShow, this, [this, view_menu] {
+        view_menu->clear();
+        if (auto* panes = createPopupMenu()) {
+            for (auto* action : panes->actions()) view_menu->addAction(action);
+            panes->deleteLater();
+        }
+        view_menu->addSeparator();
+        view_menu->addAction(tr("Reset Layout"), this, [this] { reset_layout(); });
+    });
 
     state_ = new QLabel(tr("not attached"), this);
     statusBar()->addPermanentWidget(state_);
@@ -86,6 +91,7 @@ void debugger_window::build_ui() {
 }
 
 void debugger_window::closeEvent(QCloseEvent* e) {
+    save_layout();
     if (session_ && panel_) {
         panel_->release_process();
         QCoreApplication::processEvents(QEventLoop::AllEvents, 250);
@@ -118,8 +124,60 @@ void debugger_window::try_symbols_for(const QString& kit_path) {
     append_log(tr("-- no symbols for '%1' in %2. Use Symbols... to point at the .elf or the .self it was built into.").arg(base, dirs.join(QStringLiteral(", "))));
 }
 
+void debugger_window::build_panes() {
+    setDockNestingEnabled(true);
+    setDockOptions(QMainWindow::AnimatedDocks | QMainWindow::AllowNestedDocks | QMainWindow::AllowTabbedDocks | QMainWindow::GroupedDragging);
+
+    addToolBarBreak();
+    addToolBar(panel_->run_toolbar());
+    auto* code = panel_->code_widget();
+    code->setMinimumSize(420, 260);
+    setCentralWidget(code);
+
+    for (const auto& pane : panel_->panes()) {
+        auto* dock = new QDockWidget(pane.title, this);
+        dock->setObjectName(pane.id);
+        dock->setWidget(pane.body);
+        dock->setAllowedAreas(Qt::AllDockWidgetAreas);
+        addDockWidget(pane.area, dock);
+        docks_.insert(pane.id, dock);
+    }
+    reset_layout();
+    restore_layout();
+}
+
+void debugger_window::reset_layout() {
+    auto at = [this](const QString& id) { return docks_.value(id); };
+    for (const auto& id : {QStringLiteral("pane_registers"), QStringLiteral("pane_memory")}) {
+        if (auto* d = at(id)) { d->setFloating(false); d->show(); addDockWidget(Qt::RightDockWidgetArea, d); }
+    }
+    const QStringList bottom{QStringLiteral("pane_callstack"), QStringLiteral("pane_threads"), QStringLiteral("pane_modules"), QStringLiteral("pane_process"), QStringLiteral("pane_log")};
+    QDockWidget* previous = nullptr;
+    for (const auto& id : bottom) {
+        auto* d = at(id);
+        if (!d) continue;
+        d->setFloating(false);
+        d->show();
+        addDockWidget(Qt::BottomDockWidgetArea, d);
+        if (previous) tabifyDockWidget(previous, d);
+        previous = d;
+    }
+    if (auto* first = at(QStringLiteral("pane_callstack"))) first->raise();
+}
+
+void debugger_window::save_layout() {
+    QSettings s;
+    s.setValue(QStringLiteral("debugger/panes"), saveState(3));
+}
+
+void debugger_window::restore_layout() {
+    QSettings s;
+    const auto state = s.value(QStringLiteral("debugger/panes")).toByteArray();
+    if (!state.isEmpty()) restoreState(state, 3);
+}
+
 void debugger_window::append_log(const QString& line) {
-    if (log_) log_->appendPlainText(line);
+    if (panel_) panel_->append_log_line(line);
 }
 
 void debugger_window::set_state(const QString& text) {

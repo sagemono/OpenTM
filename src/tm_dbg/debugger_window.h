@@ -4,6 +4,7 @@
 #include <tm_session/session_factory.h>
 #include <tm_session/target_record.h>
 
+#include <QHash>
 #include <QMainWindow>
 #include <QString>
 
@@ -12,6 +13,7 @@
 class QComboBox;
 class QLabel;
 class QLineEdit;
+class QDockWidget;
 class QPlainTextEdit;
 class QPushButton;
 
@@ -33,6 +35,10 @@ public:
 
 private:
     void build_ui();
+    void build_panes();
+    void save_layout();
+    void restore_layout();
+    void reset_layout();
     target_record selected_target() const;
     void wire_session();
     void ask_for_process_list();
@@ -50,10 +56,10 @@ private:
     bool             warned_stale_ = false;
 
     debugger_panel*  panel_    = nullptr;
-    QPlainTextEdit*  log_      = nullptr;
     QLabel*          state_    = nullptr;
     QComboBox*       target_box_  = nullptr;
     QPushButton*     attach_btn_  = nullptr;
+    QHash<QString, QDockWidget*> docks_;
 };
 
 } // namespace opentm::tm_ui

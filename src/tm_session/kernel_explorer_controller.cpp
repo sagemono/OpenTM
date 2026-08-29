@@ -26,13 +26,13 @@ kernel_explorer_controller::~kernel_explorer_controller() = default;
 
 std::uint32_t kernel_explorer_controller::send_dbgp(
     std::uint32_t cmd, std::uint32_t pid,
-    const std::vector<std::byte>& body, std::uint32_t handle)
+    const std::vector<std::byte>& body, std::uint32_t handle, std::uint32_t round)
 {
     using namespace opentm::tm_core;
     if (!connection_ || !session_) return 0;
 
     const auto seq = session_->next_dbgshl_seq();
-    pending_[seq] = pending{cmd, pid, handle};
+    pending_[seq] = pending{cmd, pid, handle, round};
 
     
     dbgp::request req;
@@ -173,7 +173,7 @@ void kernel_explorer_controller::on_frame_received(opentm::tm_core::deci3_frame 
     case cmd::get_user_memory_stat: on_user_memory_stat_reply(*r, p.pid); break;
     case cmd::get_thread_list:            on_thread_list_reply(*r, p.pid); break;
     case cmd::get_ppu_thread_info:
-        on_thread_info_reply(*r, p.pid, p.handle);
+        on_thread_info_reply(*r, p.pid, p.handle, p.round);
         break;
     case cmd::get_module_list: {
         const auto v = dbgp::parse_handle_list(*r);
@@ -310,6 +310,7 @@ void kernel_explorer_controller::on_thread_list_reply(
         emit threads_ready(pid, {});
         return;
     }
+    ++threads_state_.round;
     threads_state_.pid = pid;
     threads_state_.info.clear();
     threads_state_.expected = static_cast<int>(tl->ppu_thread_ids.size());
@@ -320,20 +321,24 @@ void kernel_explorer_controller::on_thread_list_reply(
     }
     for (const auto tid : tl->ppu_thread_ids) {
         auto body = opentm::tm_core::dbgp::build_ppu_thread_info_request_body(tid);
-        send_dbgp(opentm::tm_core::dbgshl::cmd::get_ppu_thread_info, pid, body, static_cast<std::uint32_t>(tid & 0xffffffffu));
+        send_dbgp(opentm::tm_core::dbgshl::cmd::get_ppu_thread_info, pid, body,
+                  static_cast<std::uint32_t>(tid & 0xffffffffu), threads_state_.round);
     }
 }
 
 void kernel_explorer_controller::on_thread_info_reply(
     const opentm::tm_core::dbgp::response& r,
-    std::uint32_t pid, std::uint64_t )
+    std::uint32_t pid, std::uint64_t, std::uint32_t round)
 {
+    if (round != threads_state_.round) return;
+
     auto info = opentm::tm_core::dbgp::parse_ppu_thread_info(r);
     if (info) threads_state_.info.push_back(*info);
     ++threads_state_.received;
-    
+
     if (threads_state_.received >= threads_state_.expected) {
         emit threads_ready(pid, threads_state_.info);
+        ++threads_state_.round;
     }
 }
 
