@@ -112,7 +112,7 @@ void debug_controller::read_memory(quint64 address, quint32 length) {
         if (send_dbgp(dbgshl::cmd::read_memory, body, pending{kind::read_memory, at, 0, group}) == 0) {
             const auto it = reads_.find(group);
             if (it == reads_.end()) return;
-            it.value().failed = true;  // the chunks that never went out will never answer
+            // the chunks that never went out will never answer
             it.value().outstanding = 0;
             finish_read_group(group);
             return;
@@ -219,25 +219,24 @@ void debug_controller::finish_read_group(std::uint32_t group) {
     const auto g = it.value();
     reads_.erase(it);
 
-    if (g.failed) {
-        emit memory_read_failed(g.address, 0);
-        return;
-    }
-
     QByteArray out;
     out.reserve(static_cast<int>(g.length));
     const quint64 first = chunk_base(g.address);
     for (quint64 at = first; out.size() < static_cast<int>(g.length); at += memory_chunk) {
         const auto chunk = g.chunks.value(at);
-        if (chunk.isEmpty()) {
-            emit memory_read_failed(g.address, 0);
-            return;
-        }
+        if (chunk.isEmpty()) break;   // stop at the first gap, keep what we have
         const int skip = (at < g.address) ? static_cast<int>(g.address - at) : 0;
         if (skip >= chunk.size()) break;
         const int take = std::min<int>(chunk.size() - skip, static_cast<int>(g.length) - out.size());
         if (take <= 0) break;
         out.append(chunk.constData() + skip, take);
+    }
+    if (out.isEmpty()) {
+        emit memory_read_failed(g.address, g.last_status);
+        return;
+    }
+    if (out.size() < static_cast<int>(g.length)) {
+        emit log_message(QStringLiteral("    -- read of 0x%1 gave %2 of %3 bytes").arg(g.address, 0, 16).arg(out.size()).arg(g.length));
     }
     emit memory_ready(g.address, out);
 }
@@ -251,7 +250,11 @@ void debug_controller::on_memory_chunk(const opentm::tm_core::dbgp::response& r,
 
     const auto block = dbgp::parse_read_memory(r);
     if (!block || r.result_code != 0) {
-        g.failed = true;
+        g.last_status = r.result_code;
+        emit log_message(QStringLiteral("    !! chunk 0x%1 failed: result=0x%2 payload=%3B").arg(p.address, 0, 16).arg(r.result_code, 8, 16, QChar('0')).arg(r.payload.size()));
+    } else if (block->address != p.address) {
+        emit log_message(QStringLiteral("    !! chunk echo mismatch: asked 0x%1, got 0x%2").arg(p.address, 0, 16).arg(block->address, 0, 16));
+        g.chunks.insert(p.address, QByteArray(reinterpret_cast<const char*>(block->data.data()), static_cast<int>(block->data.size())));
     } else {
         g.chunks.insert(block->address, QByteArray(reinterpret_cast<const char*>(block->data.data()), static_cast<int>(block->data.size())));
     }

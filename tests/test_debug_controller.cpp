@@ -136,3 +136,15 @@ TEST_CASE("breakpoints are only remembered once the kit confirms", "[debug_contr
     CHECK_FALSE(dbg.has_breakpoint(0x39110));
     CHECK(dbg.breakpoints().isEmpty());
 }
+
+TEST_CASE("a window running off the end of memory keeps what it read", "[debug_controller]") {
+    CHECK(debug_controller::chunk_count(0xd0100890, 0x800) == 9);
+
+    SECTION("a window clamped to the stack end asks for fewer chunks") {
+        const quint64 sp  = 0xd0100890;
+        const quint64 top = 0xd0101000;
+        const auto window = static_cast<quint32>(top - sp);
+        CHECK(window == 0x770);
+        CHECK(debug_controller::chunk_base(sp + window - 1) == 0xd0100f00);
+    }
+}

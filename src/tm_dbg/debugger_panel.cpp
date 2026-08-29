@@ -272,9 +272,16 @@ void debugger_panel::request_callstack() {
     //r1 = sp
     const auto sp = regs_.gpr[1];
     if (sp == 0) return;
+
+    auto window = stack_window;
+    if (stack_top_ > sp && (stack_top_ - sp) < window) {
+        window = static_cast<quint32>(stack_top_ - sp);
+    }
+    if (window < 32) return;
+
     stack_base_    = sp;
     stack_pending_ = true;
-    emit memory_requested(sp, stack_window);
+    emit memory_requested(sp, window);
 }
 
 void debugger_panel::show_callstack(const QByteArray& stack) {
@@ -345,7 +352,8 @@ void debugger_panel::on_memory_read_failed(quint64 address, quint32 status) {
     }
     if (stack_pending_ && address == stack_base_) {
         stack_pending_ = false;
-        return;   // a short stack is normal near the top of one
+        emit log_message(tr("!! debugger: could not read the stack at %1, so there is no callstack to show").arg(hex64(address)));
+        return;
     }
     last_read_status_ = status;
     emit log_message(tr("!! debugger: cannot read %1 (status 0x%2) - is that address mapped in this process?").arg(hex64(address)).arg(status, 8, 16, QChar('0')));
@@ -610,6 +618,7 @@ void debugger_panel::on_threads_ready(std::uint32_t, QList<opentm::tm_core::dbgp
             auto* item = threads_view_->topLevelItem(i);
             if (item->data(0, Qt::UserRole).toULongLong() != thread_id_) continue;
             threads_view_->setCurrentItem(item);
+            stack_top_ = item->data(4, Qt::UserRole).toULongLong();
             if (item->data(1, Qt::UserRole).toUInt() == thread_state_stop && !have_regs_) {
                 emit registers_requested(thread_id_);
             }
@@ -660,6 +669,7 @@ void debugger_panel::thread_selected() {
     const auto tid = item->data(0, Qt::UserRole).toULongLong(&ok);
     if (!ok || tid == 0) return;
     thread_id_ = tid;
+    stack_top_ = item->data(4, Qt::UserRole).toULongLong();
 
     const auto state = item->data(1, Qt::UserRole).toUInt();
     if (state != thread_state_stop) {

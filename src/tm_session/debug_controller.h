@@ -106,7 +106,7 @@ private:
         std::uint64_t address = 0;
         std::uint32_t length  = 0;
         int           outstanding = 0;
-        bool          failed  = false;
+        std::uint32_t last_status = 0;
         QHash<quint64, QByteArray> chunks;
     };
 

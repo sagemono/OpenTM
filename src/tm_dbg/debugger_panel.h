@@ -108,6 +108,7 @@ private:
     quint32 last_read_status_ = 0;
     quint64 stack_base_ = 0;
     bool    stack_pending_ = false;
+    quint64 stack_top_ = 0;
     quint64 memory_base_    = 0;
     bool    memory_pending_ = false;
     bool                                 have_regs_ = false;
