@@ -28,6 +28,10 @@ add_library(tm_core STATIC
     ppc_stack.h
     elf_symbols.cpp
     elf_symbols.h
+    elf_image.cpp
+    elf_image.h
+    dwarf_line.cpp
+    dwarf_line.h
 )
 
 set_target_properties(tm_core PROPERTIES AUTOMOC ON)

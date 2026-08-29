@@ -4,6 +4,7 @@
 #include <tm_core/ppc_disasm.h>
 #include <tm_core/ppc_stack.h>
 #include <tm_core/elf_symbols.h>
+#include <tm_core/dwarf_line.h>
 
 #include <QByteArray>
 #include <QHash>
@@ -110,10 +111,12 @@ private:
     quint64 selected_address() const;
     QList<quint64> process_threads() const;
     QString symbol_for(quint64 address) const;
+    QString source_for(quint64 address, bool full_path = false) const;
     std::optional<quint64> step_destination(quint64 pc, bool over) const;
 
     opentm::tm_core::ppc_disassembler disasm_;
     opentm::tm_core::symbol_table     symbols_;
+    opentm::tm_core::line_table       lines_;
 
     quint64                              code_base_ = 0;
     QByteArray                           code_;

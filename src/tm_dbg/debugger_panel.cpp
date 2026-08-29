@@ -40,7 +40,7 @@ QString hex_short(quint64 v) {
     return QStringLiteral("0x%1").arg(v, 8, 16, QChar('0'));
 }
 
-enum code_column { col_marker = 0, col_address, col_opcode, col_text, col_symbol };
+enum code_column { col_marker = 0, col_address, col_opcode, col_text, col_symbol, col_source };
 
 QString decode_cr(std::uint32_t cr) {
     QStringList fields;
@@ -108,9 +108,9 @@ void debugger_panel::build_ui() {
     code_view_->setRootIsDecorated(false);
     code_view_->setUniformRowHeights(true);
     code_view_->setFont(mono);
-    code_view_->setColumnCount(5);
+    code_view_->setColumnCount(6);
     code_view_->setHeaderLabels({QString(), tr("Address"), tr("Opcode"),
-                                 tr("Disassembly"), tr("Function")});
+                                 tr("Disassembly"), tr("Function"), tr("Source")});
     code_view_->header()->setStretchLastSection(true);
     code_view_->setColumnWidth(col_marker, 28);
     code_view_->setColumnWidth(col_address, 150);
@@ -128,8 +128,8 @@ void debugger_panel::build_ui() {
     stack_view_ = new QTreeWidget(this);
     stack_view_->setRootIsDecorated(false);
     stack_view_->setFont(mono);
-    stack_view_->setColumnCount(4);
-    stack_view_->setHeaderLabels({tr("#"), tr("Address"), tr("Function"), tr("Frame")});
+    stack_view_->setColumnCount(5);
+    stack_view_->setHeaderLabels({tr("#"), tr("Address"), tr("Function"), tr("Source"), tr("Frame")});
     add_pane(tr("Callstack"), QStringLiteral("pane_callstack"), stack_view_, Qt::BottomDockWidgetArea);
 
     threads_view_ = new QTreeWidget(this);
@@ -370,6 +370,17 @@ void debugger_panel::on_memory_ready(quint64 address, QByteArray bytes) {
     redraw_disassembly();
 }
 
+QString debugger_panel::source_for(quint64 address, bool full_path) const {
+    const auto at = lines_.find(address);
+    if (!at) return {};
+    auto file = QString::fromStdString(at->file);
+    if (!full_path) {
+        const auto cut = std::max(file.lastIndexOf(QLatin1Char('/')), file.lastIndexOf(QChar(0x5c)));   // backslash
+        if (cut >= 0) file = file.mid(cut + 1);
+    }
+    return QStringLiteral("%1:%2").arg(file).arg(at->line);
+}
+
 QString debugger_panel::symbol_for(quint64 address) const {
     const auto named = symbols_.describe(address);
     return named ? QString::fromStdString(*named) : QString();
@@ -383,6 +394,15 @@ bool debugger_panel::load_symbols(const QString& path, QString* error) {
         return false;
     }
     emit log_message(tr("-- %1 function symbols from %2").arg(symbols_.size()).arg(path));
+
+    std::string line_err;
+    if (lines_.load(path.toStdString(), &line_err)) {
+        emit log_message(tr("-- %1 source line rows").arg(lines_.size()));
+    } else {
+        emit log_message(tr("-- no source lines: %1").arg(QString::fromStdString(line_err)));
+    }
+
+    refresh_breakpoints();
     redraw_disassembly();
     refresh_actions();
     return true;
@@ -428,7 +448,9 @@ void debugger_panel::show_callstack(quint64 base, const QByteArray& stack) {
         item->setText(0, QString::number(level++));
         item->setText(1, hex64(f.address));
         item->setText(2, symbol_for(f.address));
-        item->setText(3, hex64(f.frame));
+        item->setText(3, source_for(f.address));
+        item->setToolTip(3, source_for(f.address, true));
+        item->setText(4, hex64(f.frame));
     }
     for (int c = 0; c < stack_view_->columnCount(); ++c) stack_view_->resizeColumnToContents(c);
 }
@@ -494,6 +516,7 @@ void debugger_panel::redraw_disassembly() {
     code_view_->clear();
     QTreeWidgetItem* pc_item    = nullptr;
     QTreeWidgetItem* focus_item = nullptr;
+    QString last_source;
     const auto tint    = palette().color(QPalette::Highlight);
     const auto on_tint = palette().color(QPalette::HighlightedText);
 
@@ -506,6 +529,11 @@ void debugger_panel::redraw_disassembly() {
         if (const auto* sym = symbols_.find(insn.address);
             sym != nullptr && sym->address == insn.address) {
             item->setText(col_symbol, QString::fromStdString(sym->name));
+        }
+        const auto here = source_for(insn.address);
+        if (!here.isEmpty() && here != last_source) {
+            item->setText(col_source, here);
+            last_source = here;
         }
 
         const bool at_pc = have_regs_ && insn.address == pc_;
