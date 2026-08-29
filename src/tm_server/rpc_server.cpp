@@ -14,6 +14,8 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 
+#include <utility>
+
 namespace opentm::tm_server {
 
 namespace {
@@ -171,6 +173,14 @@ rpc_server::managed* rpc_server::open_target(const QJsonObject& p, QString& err)
         return have_m;
     }
 
+    for (auto* have_m : std::as_const(sessions_)) {
+        const auto& have = have_m->session->target();
+        if (have.host == r.host && have.port == r.port) {
+            emit log_message(QStringLiteral("'%1' is already open as '%2' - attaching to that session").arg(handle, have_m->handle));
+            return have_m;
+        }
+    }
+
     auto* m = new managed;
     m->handle  = handle;
     m->name    = r.name;
@@ -264,6 +274,44 @@ void rpc_server::wire_session_events(managed* m) {
     connect(s, &api::target_went_down, this, [this, tag](const QString& why) {
         broadcast_event(tag, QStringLiteral("target_down"), {{"reason", why}});
     });
+
+    connect(s, &api::debug_memory_ready, this, [this, tag](quint64 a, QByteArray d) {
+        broadcast_event(tag, QStringLiteral("debug_memory"), {{"address", hex(a)}, {"data", QString::fromLatin1(d.toHex())}});
+    });
+    connect(s, &api::debug_memory_read_failed, this, [this, tag](quint64 a, quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_memory_failed"), {{"address", hex(a)}, {"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_memory_written, this, [this, tag](quint64 a, quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_memory_written"), {{"address", hex(a)}, {"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_registers_ready, this,
+            [this, tag](quint64 tid, opentm::tm_core::dbgp::ppu_registers r) {
+        QJsonArray gprs;
+        for (auto v : r.gpr) gprs.append(hex(v));
+        broadcast_event(tag, QStringLiteral("debug_registers"), {{"thread", hex(tid)}, {"pc", hex(r.pc)}, {"lr", hex(r.lr)}, {"ctr", hex(r.ctr)}, {"cr", hex(r.cr)}, {"gpr", gprs}});
+    });
+    connect(s, &api::debug_registers_written, this, [this, tag](quint64 tid, quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_registers_written"), {{"thread", hex(tid)}, {"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_breakpoint_added, this, [this, tag](quint64 a, quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_breakpoint_added"), {{"address", hex(a)}, {"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_breakpoint_removed, this, [this, tag](quint64 a, quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_breakpoint_removed"), {{"address", hex(a)}, {"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_thread_stopped, this,
+            [this, tag](quint64 tid, quint64 a, quint32 reason) {
+        broadcast_event(tag, QStringLiteral("debug_stopped"), {{"thread", hex(tid)}, {"address", hex(a)}, {"reason", static_cast<qint64>(reason)}});
+    });
+    connect(s, &api::debug_running_changed, this, [this, tag](bool running) {
+        broadcast_event(tag, QStringLiteral("debug_running"), {{"running", running}});
+    });
+    connect(s, &api::debug_halt_finished, this, [this, tag](quint32 st) {
+        broadcast_event(tag, QStringLiteral("debug_halted"), {{"status", static_cast<qint64>(st)}});
+    });
+    connect(s, &api::debug_process_changed, this, [this, tag](quint32 pid) {
+        broadcast_event(tag, QStringLiteral("debug_process"), {{"pid", static_cast<qint64>(pid)}});
+    });
     connect(s, &api::transfer_finished, this, [this, tag] {
         broadcast_event(tag, QStringLiteral("transfer_finished"), {});
     });
@@ -340,6 +388,15 @@ void rpc_server::register_methods() {
     };
 
     // server
+    add("server.version", false, false, false,
+        "When this server was built, and what it can do. Use it to spot a server older than the client talking to it.",
+        [](managed*, const QJsonObject&, QString&) {
+            return QJsonObject{
+                {"build", QStringLiteral(__DATE__ " " __TIME__)},
+                {"debugger", true},
+            };
+        });
+
     add("server.methods", false, false, false, "List available methods and their requirements.",
         [this](managed*, const QJsonObject&, QString&) {
             QJsonArray arr;
@@ -537,6 +594,129 @@ void rpc_server::register_methods() {
                 if (!p.contains("pid")) { err = QStringLiteral("pid required"); return {}; }
                 (m->session->*slot)(pid_of(p));
                 return ack("requested", p.value("pid"));
+            });
+    }
+
+    {
+        auto hex_arg = [](const QJsonObject& p, const char* key, bool* ok = nullptr) -> quint64 {
+            auto text = p.value(QLatin1String(key)).toString().trimmed();
+            if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) text = text.mid(2);
+            bool parsed = false;
+            const auto v = text.toULongLong(&parsed, 16);
+            if (ok) *ok = parsed;
+            return parsed ? v : 0;
+        };
+        auto hex_list_arg = [](const QJsonObject& p, const char* key) {
+            QList<quint64> out;
+            for (const auto& v : p.value(QLatin1String(key)).toArray()) {
+                auto text = v.toString().trimmed();
+                if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) text = text.mid(2);
+                bool parsed = false;
+                const auto x = text.toULongLong(&parsed, 16);
+                if (parsed) out.append(x);
+            }
+            return out;
+        };
+
+        add("debug.attach", true, true, true,
+            "Point the debugger at a process. Every other debug verb needs this first.",
+            [ack](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                if (!p.contains("pid")) { err = QStringLiteral("pid required"); return {}; }
+                m->session->debug_set_process(pid_of(p));
+                return ack("attached", p.value("pid"));
+            });
+
+        add("debug.read_memory", false, true, true,
+            "Read memory. Answers with a 'debug_memory' event.",
+            [ack, hex_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                bool ok = false;
+                const auto address = hex_arg(p, "address", &ok);
+                if (!ok) { err = QStringLiteral("address required, as hex"); return {}; }
+                const auto length = p.value("length").toInt(0x100);
+                m->session->debug_read_memory(address, static_cast<quint32>(length));
+                return ack("requested", true);
+            });
+
+        add("debug.write_memory", true, true, true,
+            "Write memory. `data` is hex, two characters per byte.",
+            [ack, hex_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                bool ok = false;
+                const auto address = hex_arg(p, "address", &ok);
+                if (!ok) { err = QStringLiteral("address required, as hex"); return {}; }
+                const auto data = QByteArray::fromHex(p.value("data").toString().toLatin1());
+                if (data.isEmpty()) { err = QStringLiteral("data required, as hex"); return {}; }
+                m->session->debug_write_memory(address, data);
+                return ack("requested", true);
+            });
+
+        add("debug.read_registers", false, true, true,
+            "Read a thread's PPU registers. Answers with a 'debug_registers' event.",
+            [ack, hex_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                bool ok = false;
+                const auto thread = hex_arg(p, "thread", &ok);
+                if (!ok) { err = QStringLiteral("thread required, as hex"); return {}; }
+                m->session->debug_read_registers(thread);
+                return ack("requested", true);
+            });
+
+        add("debug.write_gpr", true, true, true,
+            "Write one general purpose register.",
+            [ack, hex_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                bool ok = false, ok_v = false;
+                const auto thread = hex_arg(p, "thread", &ok);
+                const auto value  = hex_arg(p, "value", &ok_v);
+                if (!ok || !ok_v) { err = QStringLiteral("thread and value required, as hex"); return {}; }
+                const auto index = p.value("index").toInt(-1);
+                if (index < 0 || index > 31) { err = QStringLiteral("index must be 0..31"); return {}; }
+                m->session->debug_write_gpr(thread, static_cast<unsigned>(index), value);
+                return ack("requested", true);
+            });
+
+        struct bp_verb { const char* name; bool set; const char* help; };
+        const bp_verb bps[] = {
+            {"debug.set_breakpoint",   true,  "Set a PPU breakpoint."},
+            {"debug.clear_breakpoint", false, "Clear a PPU breakpoint."},
+        };
+        for (const auto& b : bps) {
+            const bool set = b.set;
+            add(b.name, true, true, true, b.help,
+                [ack, hex_arg, set](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                    bool ok = false;
+                    const auto address = hex_arg(p, "address", &ok);
+                    if (!ok) { err = QStringLiteral("address required, as hex"); return {}; }
+                    if (set) m->session->debug_set_breakpoint(address);
+                    else     m->session->debug_clear_breakpoint(address);
+                    return ack("requested", true);
+                });
+        }
+
+        add("debug.resume", true, true, true, "Continue the given threads.",
+            [ack, hex_list_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                const auto ids = hex_list_arg(p, "threads");
+                if (ids.isEmpty()) { err = QStringLiteral("threads required"); return {}; }
+                m->session->debug_resume(ids);
+                return ack("requested", true);
+            });
+
+        add("debug.halt", true, true, true, "Stop the given threads.",
+            [ack, hex_list_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                const auto ids = hex_list_arg(p, "threads");
+                if (ids.isEmpty()) { err = QStringLiteral("threads required"); return {}; }
+                m->session->debug_halt(ids);
+                return ack("requested", true);
+            });
+
+        add("debug.step", true, true, true,
+            "Step a thread. `addresses` lists every landing place to cover - a "
+            "conditional branch needs both the target and the fall-through.",
+            [ack, hex_arg, hex_list_arg](managed* m, const QJsonObject& p, QString& err) -> QJsonObject {
+                bool ok = false;
+                const auto thread = hex_arg(p, "thread", &ok);
+                if (!ok) { err = QStringLiteral("thread required, as hex"); return {}; }
+                const auto addresses = hex_list_arg(p, "addresses");
+                if (addresses.isEmpty()) { err = QStringLiteral("addresses required"); return {}; }
+                m->session->debug_step_to(thread, addresses);
+                return ack("requested", true);
             });
     }
 

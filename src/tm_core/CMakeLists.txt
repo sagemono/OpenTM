@@ -22,6 +22,10 @@ add_library(tm_core STATIC
     wol.h
     dbgshl_cmd.h
     tty_stream.h
+    ppc_disasm.cpp
+    ppc_disasm.h
+    ppc_stack.cpp
+    ppc_stack.h
 )
 
 set_target_properties(tm_core PROPERTIES AUTOMOC ON)
@@ -30,10 +34,14 @@ target_include_directories(tm_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
+find_package(capstone CONFIG REQUIRED)
+
 target_link_libraries(tm_core
     PUBLIC
         Qt6::Core
         Qt6::Network
+    PRIVATE
+        capstone::capstone
 )
 
 opentm_target_speedup(tm_core NETWORK)

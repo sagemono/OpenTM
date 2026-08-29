@@ -70,6 +70,18 @@ public:
     void terminate_process(std::uint32_t pid) override;
     void trigger_core_dump(std::uint32_t pid) override;
 
+    bool supports_debugger() const override { return true; }
+    void debug_read_memory(quint64 address, quint32 length) override;
+    void debug_write_memory(quint64 address, QByteArray data) override;
+    void debug_read_registers(quint64 thread_id) override;
+    void debug_write_gpr(quint64 thread_id, unsigned index, quint64 value) override;
+    void debug_set_breakpoint(quint64 address) override;
+    void debug_clear_breakpoint(quint64 address) override;
+    void debug_resume(QList<quint64> thread_ids) override;
+    void debug_halt(QList<quint64> thread_ids) override;
+    void debug_step_to(quint64 thread_id, QList<quint64> addresses) override;
+    void debug_set_process(std::uint32_t pid) override;
+
 signals:
     void server_lost(QString reason);
 

@@ -16,7 +16,14 @@
         "png"
       ]
     },
-    "catch2"
+    "catch2",
+    {
+      "name": "capstone",
+      "default-features": false,
+      "features": [
+        "ppc"
+      ]
+    }
   ],
   "builtin-baseline": "ce35b1a53aac26d7fcdb8ee1ef7a8e4eea02d27b"
 }

@@ -354,6 +354,7 @@ void main_window::wire_slot_panels(target_slot* slot) {
     connect(s, &session_api::conds_ready,         k, &kernel_explorer_panel::on_conds_ready);
     connect(s, &session_api::event_queues_ready,  k, &kernel_explorer_panel::on_event_queues_ready);
     connect(s, &session_api::containers_ready,    k, &kernel_explorer_panel::on_containers_ready);
+
 }
 
 wire_log_panel* main_window::active_wire() const {

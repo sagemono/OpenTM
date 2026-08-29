@@ -419,12 +419,17 @@ std::optional<ppu_registers> parse_ppu_registers(const response& r) {
         out.fpr[i] = read_be_u64(p, fpr_at + i * 8);
     }
 
-    // pc, cr, a four byte hole, then lr and ctr
+    // pc, cr, then lr and ctr - cr is a u32 and lr follows it immediately, with
+    // no padding between them
     if (p.size() < ppu_special_offset + 0x1c) return out;
     out.pc  = read_be_u64(p, ppu_special_offset + 0x00);
     out.cr  = read_be_u32(p, ppu_special_offset + 0x08);
-    out.lr  = read_be_u64(p, ppu_special_offset + 0x10);
-    out.ctr = read_be_u64(p, ppu_special_offset + 0x18);
+    out.lr  = read_be_u64(p, ppu_special_offset + 0x0c);
+    out.ctr = read_be_u64(p, ppu_special_offset + 0x14);
+    if (p.size() >= ppu_special_offset + 0x28) {
+        out.xer   = read_be_u64(p, ppu_special_offset + 0x1c);
+        out.fpscr = read_be_u32(p, ppu_special_offset + 0x24);
+    }
     return out;
 }
 
@@ -508,9 +513,11 @@ std::vector<std::byte> build_write_ppu_gpr_body(
 
 std::optional<stop_event> parse_stop_event(const response& r) {
     const auto p = payload_view(r);
-    if (p.size() < 32) return std::nullopt;
+    if (p.size() < 4) return std::nullopt;
     stop_event out;
-    out.reason        = read_be_u32(p, 0);
+    out.reason = read_be_u32(p, 0);
+
+    if (!is_ppu_thread_stop(out.reason) || p.size() < 32) return out;
     out.thread_id     = read_be_u64(p, 4);
     out.address       = read_be_u64(p, 16);
     out.stack_pointer = read_be_u64(p, 24);

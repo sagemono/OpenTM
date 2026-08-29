@@ -87,4 +87,14 @@ quint16 ensure_server(QString* err) {
     return static_cast<quint16>(obj.value("port").toInt());
 }
 
+quint16 restart_server(QString* err) {
+    const auto stopped = single_instance::request(
+        QLatin1String(supervisor_socket), verb("stop_server"), 15000);
+    if (stopped.isEmpty()) {
+        if (err) *err = QStringLiteral("supervisor did not answer");
+        return 0;
+    }
+    return ensure_server(err);
+}
+
 } // namespace opentm::tm_launch

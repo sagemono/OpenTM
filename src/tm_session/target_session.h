@@ -4,6 +4,7 @@
 #include "frame_dispatcher.h"
 #include "host_file_server.h"
 #include "kernel_explorer_controller.h"
+#include "debug_controller.h"
 #include "session_api.h"
 #include "session_controller.h"
 #include "target_actions.h"
@@ -97,11 +98,24 @@ public:
     void terminate_process(std::uint32_t pid) override { kernel_.terminate_process(pid); }
     void trigger_core_dump(std::uint32_t pid) override { kernel_.trigger_core_dump(pid); }
 
+    bool supports_debugger() const override { return true; }
+    void debug_read_memory(quint64 a, quint32 n) override        { debug_.read_memory(a, n); }
+    void debug_write_memory(quint64 a, QByteArray d) override    { debug_.write_memory(a, std::move(d)); }
+    void debug_read_registers(quint64 tid) override              { debug_.read_registers(tid); }
+    void debug_write_gpr(quint64 tid, unsigned i, quint64 v) override { debug_.write_gpr(tid, i, v); }
+    void debug_set_breakpoint(quint64 a) override                { debug_.set_breakpoint(a); }
+    void debug_clear_breakpoint(quint64 a) override              { debug_.clear_breakpoint(a); }
+    void debug_resume(QList<quint64> ids) override               { debug_.resume(std::move(ids)); }
+    void debug_halt(QList<quint64> ids) override                 { debug_.halt(std::move(ids)); }
+    void debug_step_to(quint64 tid, QList<quint64> a) override   { debug_.step_to_any(tid, std::move(a)); }
+    void debug_set_process(std::uint32_t pid) override           { debug_.set_process(pid); }
+
     opentm::tm_core::tcp_connection* connection() { return &conn_; }
     session_controller*              session()    { return &session_; }
     target_actions*                  actions()    { return &actions_; }
     file_explorer_controller*        explorer()   { return &explorer_; }
     kernel_explorer_controller*      kernel()     { return &kernel_; }
+    debug_controller*                debugger()   { return &debug_; }
     host_file_server*                files()      { return &files_; }
     frame_dispatcher*                dispatcher() { return &disp_; }
 
@@ -132,6 +146,7 @@ private:
     host_file_server                files_{&conn_};
     file_explorer_controller        explorer_{&conn_, &session_};
     kernel_explorer_controller      kernel_{&conn_, &session_};
+    debug_controller                debug_{&conn_, &session_};
     target_actions                  actions_{&conn_, &session_};
     target_record                   record_;
 };

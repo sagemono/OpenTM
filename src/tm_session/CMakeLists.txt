@@ -13,6 +13,8 @@ add_library(tm_session STATIC
     host_file_server.h
     kernel_explorer_controller.cpp
     kernel_explorer_controller.h
+    debug_controller.cpp
+    debug_controller.h
     tsmp_helpers.h
     session_api.h
     rpc_client.cpp

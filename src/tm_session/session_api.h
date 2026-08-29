@@ -2,6 +2,8 @@
 
 #include "target_record.h"
 
+#include <QByteArray>
+
 #include <tm_core/dbgp_codec.h>
 #include <tm_core/dfmp_codec.h>
 #include <tm_core/tcp_connection.h>
@@ -68,6 +70,19 @@ public:
     virtual void terminate_process(std::uint32_t pid) = 0;
     virtual void trigger_core_dump(std::uint32_t pid) = 0;
 
+    // Debugger
+    virtual bool supports_debugger() const { return false; }
+    virtual void debug_read_memory(quint64 /*address*/, quint32 /*length*/) {}
+    virtual void debug_write_memory(quint64 /*address*/, QByteArray /*data*/) {}
+    virtual void debug_read_registers(quint64 /*thread_id*/) {}
+    virtual void debug_write_gpr(quint64 /*thread_id*/, unsigned /*index*/, quint64 /*value*/) {}
+    virtual void debug_set_breakpoint(quint64 /*address*/) {}
+    virtual void debug_clear_breakpoint(quint64 /*address*/) {}
+    virtual void debug_resume(QList<quint64> /*thread_ids*/) {}
+    virtual void debug_halt(QList<quint64> /*thread_ids*/) {}
+    virtual void debug_step_to(quint64 /*thread_id*/, QList<quint64> /*addresses*/) {}
+    virtual void debug_set_process(std::uint32_t /*pid*/) {}
+
     struct process_summary {
         std::uint32_t                           pid = 0;
         opentm::tm_core::dbgp::process_info     info;
@@ -109,6 +124,18 @@ signals:
     void file_op_finished(QString op, quint32 status);
     void transfer_finished();
     void transfer_failed(std::uint32_t result);
+
+    void debug_memory_ready(quint64 address, QByteArray data);
+    void debug_memory_read_failed(quint64 address, quint32 status);
+    void debug_memory_written(quint64 address, quint32 status);
+    void debug_registers_ready(quint64 thread_id, opentm::tm_core::dbgp::ppu_registers regs);
+    void debug_registers_written(quint64 thread_id, quint32 status);
+    void debug_breakpoint_added(quint64 address, quint32 status);
+    void debug_breakpoint_removed(quint64 address, quint32 status);
+    void debug_thread_stopped(quint64 thread_id, quint64 address, quint32 reason);
+    void debug_running_changed(bool running);
+    void debug_halt_finished(quint32 status);
+    void debug_process_changed(quint32 pid);
 };
 
 } // namespace opentm::tm_ui

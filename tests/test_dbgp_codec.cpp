@@ -252,14 +252,40 @@ TEST_CASE("breakpoints, stepping and the stop event", "[dbgp]") {
     }
 
     SECTION("pc, cr, lr and ctr follow the FPRs") {
+        // the exact bytes jump_into_blr.pcapng carries at a blr, where LR is
+        // finally non-zero: pc=0x3b0c4 cr=0x82004042 lr=0x390f8 fpscr=0x82004000
         response r;
         std::vector<std::uint8_t> raw;
         raw.resize(ppu_special_offset, 0);
-        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x01,0x06,0xfc,//pc
-                       0x22,0x00,0x00,0x22, //cr
-                       0x00,0x00,0x00,0x00, //hole
-                       0x00,0x00,0x00,0x00,0x00,0x01,0x04,0xd8,// lr
-                       0x00,0x00,0x00,0x00,0x00,0x19,0x0e,0x7c}) { // ctr
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x03,0xb0,0xc4, // pc
+                       0x82,0x00,0x40,0x42, // cr
+                       0x00,0x00,0x00,0x00,0x00,0x03,0x90,0xf8,   // lr, straight after cr
+                       0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,   // ctr
+                       0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,   // xer
+                       0x82,0x00,0x40,0x00}) {                     // fpscr
+            raw.push_back(static_cast<std::uint8_t>(b));
+        }
+        for (auto b : raw) r.payload.push_back(std::byte{b});
+
+        const auto regs = parse_ppu_registers(r);
+        REQUIRE(regs.has_value());
+        CHECK(regs->pc    == 0x0003b0c4);
+        CHECK(regs->cr    == 0x82004042);
+        CHECK(regs->lr    == 0x000390f8);   // not 0x000390f800000000
+        CHECK(regs->ctr   == 0);
+        CHECK(regs->xer   == 0);
+        CHECK(regs->fpscr == 0x82004000);
+    }
+
+    SECTION("the earlier stepping capture still reads the same way") {
+        // seee stepping_into_functions_from_main.pcap pc=0x106fc cr=0x22000022 lr=0x104d8 ctr=0x190e7c
+        response r;
+        std::vector<std::uint8_t> raw;
+        raw.resize(ppu_special_offset, 0);
+        for (auto b : {0x00,0x00,0x00,0x00,0x00,0x01,0x06,0xfc,
+                       0x22,0x00,0x00,0x22,
+                       0x00,0x00,0x00,0x00,0x00,0x01,0x04,0xd8,
+                       0x00,0x00,0x00,0x00,0x00,0x19,0x0e,0x7c}) {
             raw.push_back(static_cast<std::uint8_t>(b));
         }
         for (auto b : raw) r.payload.push_back(std::byte{b});
@@ -348,5 +374,66 @@ TEST_CASE("writing memory and registers", "[dbgp]") {
         CHECK(ack->spr_requested == 0x00ff);
         CHECK(ack->spr_accepted  == 0x007f);
         CHECK(ack->vmx_accepted  == 0xffffffff);
+    }
+}
+
+TEST_CASE("the event channel carries more than thread stops", "[dbgp]") {
+    using namespace opentm::tm_core::dbgp;
+
+    auto event = [](std::initializer_list<int> bytes) {
+        response r;
+        for (auto b : bytes) r.payload.push_back(std::byte{static_cast<std::uint8_t>(b)});
+        return r;
+    };
+
+    SECTION("a breakpoint hit is a thread stop") {
+        const auto r = event({0x00,0x00,0x00,0x10,
+                              0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xb4,
+                              0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x02,0xe1,0x18,
+                              0x00,0x00,0x00,0x00,0xd0,0x10,0x08,0xc0});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(is_ppu_thread_stop(ev->reason));
+        CHECK(ev->address == 0x0002e118);
+    }
+
+    SECTION("an explicit halt is too, and reads the same way") {
+        // see stop_program_execution.pcapng
+        const auto r = event({0x00,0x00,0x00,0x1a,
+                              0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xc3,
+                              0x00,0x00,0x00,0x01,
+                              0x00,0x00,0x00,0x00,0x00,0x03,0xc6,0x58,
+                              0x00,0x00,0x00,0x00,0xd0,0x10,0x08,0xb0});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(is_ppu_thread_stop(ev->reason));
+        CHECK(ev->thread_id == 0x010000c3);
+        CHECK(ev->address   == 0x0003c658);
+    }
+
+    SECTION("an SPU image load is not a stop, and its path is not an address") {
+        //start_program_execution.pcapng 
+        // reason 0x30 carries the binary file path
+        const auto r = event({0x00,0x00,0x00,0x30,
+                              0x04,0x2f,0x01,0x00,0x00,0x2f,0x01,0x00,
+                              0x44,0x3a,0x5c,0x43,0x2b,0x2b,0x5c,0x63,
+                              0x65,0x6c,0x6c,0x6d,0x61,0x72,0x6b,0x5c,
+                              0x62,0x75,0x69,0x6c,0x64,0x5c,0x73,0x70});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(ev->reason == event_spu_image);
+        CHECK_FALSE(is_ppu_thread_stop(ev->reason));
+        // the filename must never be reported as a thread or an address... whoops
+        CHECK(ev->thread_id == 0);
+        CHECK(ev->address   == 0);
+    }
+
+    SECTION("a short event is not mistaken for a stop") {
+        const auto r = event({0x00,0x00,0x00,0x33, 0x04,0x46,0x01,0x00});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK_FALSE(is_ppu_thread_stop(ev->reason));
+        CHECK(ev->address == 0);
     }
 }

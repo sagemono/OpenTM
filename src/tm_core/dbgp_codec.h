@@ -280,6 +280,8 @@ struct ppu_registers {
     std::uint32_t cr  = 0;
     std::uint64_t lr  = 0;
     std::uint64_t ctr = 0;
+    std::uint64_t xer = 0;
+    std::uint32_t fpscr = 0;
 };
 std::optional<ppu_registers> parse_ppu_registers(const response& r);
 
@@ -313,14 +315,24 @@ std::vector<std::byte> build_write_ppu_registers_body(
 std::vector<std::byte> build_write_ppu_gpr_body(
     std::uint64_t thread_id, unsigned index, std::uint64_t value);
 
-// stop_event (0x80000b00): unsolicited, sent when a thread stops. req_id is 0
+// stop_event (0x80000b00)
 struct stop_event {
     std::uint32_t reason    = 0;
     std::uint64_t thread_id = 0;
     std::uint64_t address   = 0;
     std::uint64_t stack_pointer = 0;
 };
-inline constexpr std::uint32_t stop_reason_breakpoint = 0x10u;
+inline constexpr std::uint32_t stop_reason_breakpoint = 0x10u;  // 37 byte body
+inline constexpr std::uint32_t stop_reason_halted     = 0x1au;  // 37 byte body
+inline constexpr std::uint32_t event_thread           = 0x20u;  // 17 byte body
+inline constexpr std::uint32_t event_spu_image        = 0x30u;  // path string
+inline constexpr std::uint32_t event_spu_ids          = 0x32u;
+inline constexpr std::uint32_t event_spu_short        = 0x33u;
+
+// only these two carry a thread id, address and stack pointer
+constexpr bool is_ppu_thread_stop(std::uint32_t reason) noexcept {
+    return reason == stop_reason_breakpoint || reason == stop_reason_halted;
+}
 std::optional<stop_event> parse_stop_event(const response& r);
 
 } // namespace opentm::tm_core::dbgp

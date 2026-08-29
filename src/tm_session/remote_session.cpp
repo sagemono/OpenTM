@@ -104,6 +104,15 @@ dbgp::container_info container_from(const QJsonObject& o) {
     return e;
 }
 
+quint64 hex_value(const QJsonValue& v) {
+    auto text = v.toString().trimmed();
+    if (text.isEmpty()) return 0;
+    if (text.startsWith(QLatin1String("0x"), Qt::CaseInsensitive)) text = text.mid(2);
+    bool ok = false;
+    const auto out = text.toULongLong(&ok, 16);
+    return ok ? out : 0;
+}
+
 template <typename T, typename Fn>
 QList<T> list_from(const QJsonArray& arr, Fn conv) {
     QList<T> out;
@@ -194,8 +203,29 @@ void remote_session::set_target(const target_record& r) {
     handle_ = r.id.isEmpty() ? (r.name.isEmpty() ? QStringLiteral("%1:%2").arg(r.host).arg(r.port) : r.name) : r.id;
     // the whole record goes over: the server drives resets, WoL and file
     // serving from its own copy, so a partial one silently loses those settings
-    send(QStringLiteral("target.open"), {{"record", target_record_to_json(r)}});
-    refresh_status();
+    rpc_.call(QStringLiteral("target.open"), {{"record", target_record_to_json(r)}},
+              [this](bool ok, const QJsonObject& reply, const QString& err) {
+        if (!ok) {
+            emit error(QStringLiteral("target.open: %1").arg(err));
+            return;
+        }
+        //multiinstancing betwen debugger
+        rpc_.call(QStringLiteral("server.version"), {},
+                  [this](bool vok, const QJsonObject& v, const QString&) {
+            if (!vok) {
+                emit log_message(QStringLiteral("    !! this session server is older than this client. It will not share a console between apps. Restart it with 'opentm_dbg --restart-server', or quit the OpenTM tray."));
+                return;
+            }
+            emit log_message(QStringLiteral("    -- session server built %1%2").arg(v.value("build").toString(), v.value("debugger").toBool() ? QString() : QStringLiteral(" (no debugger support)")));
+        });
+
+        const auto given = reply.value("target").toString();
+        if (!given.isEmpty() && given != handle_) {
+            emit log_message(QStringLiteral("    -- attached to session '%1'").arg(given));
+            handle_ = given;
+        }
+        refresh_status();
+    });
 }
 
 void remote_session::clear_target() {
@@ -345,6 +375,38 @@ void remote_session::on_event(const QString& target, const QString& name, const 
         emit transfer_failed(static_cast<std::uint32_t>(num(p.value("result"))));
     } else if (name == QLatin1String("install_reply")) {
         emit install_reply(static_cast<std::uint32_t>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_memory")) {
+        emit debug_memory_ready(hex_value(p.value("address")), QByteArray::fromHex(p.value("data").toString().toLatin1()));
+    } else if (name == QLatin1String("debug_memory_failed")) {
+        emit debug_memory_read_failed(hex_value(p.value("address")), static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_memory_written")) {
+        emit debug_memory_written(hex_value(p.value("address")), static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_registers")) {
+        opentm::tm_core::dbgp::ppu_registers regs;
+        regs.thread_id = hex_value(p.value("thread"));
+        regs.pc  = hex_value(p.value("pc"));
+        regs.lr  = hex_value(p.value("lr"));
+        regs.ctr = hex_value(p.value("ctr"));
+        regs.cr  = static_cast<std::uint32_t>(hex_value(p.value("cr")));
+        const auto gprs = p.value("gpr").toArray();
+        for (int i = 0; i < gprs.size() && i < static_cast<int>(regs.gpr.size()); ++i) {
+            regs.gpr[static_cast<std::size_t>(i)] = hex_value(gprs.at(i));
+        }
+        emit debug_registers_ready(regs.thread_id, regs);
+    } else if (name == QLatin1String("debug_registers_written")) {
+        emit debug_registers_written(hex_value(p.value("thread")), static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_breakpoint_added")) {
+        emit debug_breakpoint_added(hex_value(p.value("address")), static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_breakpoint_removed")) {
+        emit debug_breakpoint_removed(hex_value(p.value("address")), static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_stopped")) {
+        emit debug_thread_stopped(hex_value(p.value("thread")), hex_value(p.value("address")), static_cast<quint32>(num(p.value("reason"))));
+    } else if (name == QLatin1String("debug_running")) {
+        emit debug_running_changed(p.value("running").toBool());
+    } else if (name == QLatin1String("debug_halted")) {
+        emit debug_halt_finished(static_cast<quint32>(num(p.value("status"))));
+    } else if (name == QLatin1String("debug_process")) {
+        emit debug_process_changed(static_cast<quint32>(num(p.value("pid"))));
     } else if (name == QLatin1String("conn_state")) {
         using state = opentm::tm_core::tcp_connection::state;
         state_ = static_cast<state>(p.value("state").toInt());
@@ -406,6 +468,55 @@ void remote_session::on_event(const QString& target, const QString& name, const 
         else if (kind == QLatin1String("event_queues")) emit event_queues_ready(pid, list_from<dbgp::event_queue_info>(items, evq_from));
         else if (kind == QLatin1String("containers"))   emit containers_ready(pid, list_from<dbgp::container_info>(items, container_from));
     }
+}
+
+namespace {
+QString hex_of(quint64 v) { return QStringLiteral("0x%1").arg(v, 0, 16); }
+QJsonArray hex_list(const QList<quint64>& vs) {
+    QJsonArray a;
+    for (auto v : vs) a.append(hex_of(v));
+    return a;
+}
+} // namespace
+
+void remote_session::debug_read_memory(quint64 address, quint32 length) {
+    send(QStringLiteral("debug.read_memory"), {{"address", hex_of(address)}, {"length", static_cast<int>(length)}});
+}
+
+void remote_session::debug_write_memory(quint64 address, QByteArray data) {
+    send(QStringLiteral("debug.write_memory"), {{"address", hex_of(address)}, {"data", QString::fromLatin1(data.toHex())}});
+}
+
+void remote_session::debug_read_registers(quint64 thread_id) {
+    send(QStringLiteral("debug.read_registers"), {{"thread", hex_of(thread_id)}});
+}
+
+void remote_session::debug_write_gpr(quint64 thread_id, unsigned index, quint64 value) {
+    send(QStringLiteral("debug.write_gpr"), {{"thread", hex_of(thread_id)}, {"index", static_cast<int>(index)}, {"value", hex_of(value)}});
+}
+
+void remote_session::debug_set_breakpoint(quint64 address) {
+    send(QStringLiteral("debug.set_breakpoint"), {{"address", hex_of(address)}});
+}
+
+void remote_session::debug_clear_breakpoint(quint64 address) {
+    send(QStringLiteral("debug.clear_breakpoint"), {{"address", hex_of(address)}});
+}
+
+void remote_session::debug_resume(QList<quint64> thread_ids) {
+    send(QStringLiteral("debug.resume"), {{"threads", hex_list(thread_ids)}});
+}
+
+void remote_session::debug_halt(QList<quint64> thread_ids) {
+    send(QStringLiteral("debug.halt"), {{"threads", hex_list(thread_ids)}});
+}
+
+void remote_session::debug_step_to(quint64 thread_id, QList<quint64> addresses) {
+    send(QStringLiteral("debug.step"), {{"thread", hex_of(thread_id)}, {"addresses", hex_list(addresses)}});
+}
+
+void remote_session::debug_set_process(std::uint32_t pid) {
+    send(QStringLiteral("debug.attach"), {{"pid", QString::number(pid)}});
 }
 
 } // namespace opentm::tm_ui

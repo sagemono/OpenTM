@@ -51,6 +51,7 @@ void target_session::wire() {
     connect(&disp_, &frame_dispatcher::tty_text,                  &session_, &session_controller::on_tty_text);
     connect(&disp_, &frame_dispatcher::raw_frame,                 &files_,    &host_file_server::on_frame_received);
     connect(&disp_, &frame_dispatcher::raw_frame,                 &kernel_,   &kernel_explorer_controller::on_frame_received);
+    connect(&disp_, &frame_dispatcher::raw_frame,                 &debug_,    &debug_controller::on_frame_received);
     connect(&disp_, &frame_dispatcher::dfmp_get_entries_reply,    &explorer_, &file_explorer_controller::on_dfmp_get_entries_reply);
     connect(&disp_, &frame_dispatcher::dfmp_op_reply,             &explorer_, &file_explorer_controller::on_dfmp_op_reply);
     connect(&disp_, &frame_dispatcher::netmp_register_nack, this, [this](std::uint8_t status, std::uint32_t proto) {
@@ -79,6 +80,18 @@ void target_session::wire() {
     connect(&files_,    &host_file_server::log_message,           this, &session_api::log_message);
     connect(&explorer_, &file_explorer_controller::log_message,   this, &session_api::log_message);
     connect(&kernel_,   &kernel_explorer_controller::log_message, this, &session_api::log_message);
+    connect(&debug_,    &debug_controller::log_message,           this, &session_api::log_message);
+    connect(&debug_, &debug_controller::memory_ready,        this, &session_api::debug_memory_ready);
+    connect(&debug_, &debug_controller::memory_read_failed,  this, &session_api::debug_memory_read_failed);
+    connect(&debug_, &debug_controller::memory_written,      this, &session_api::debug_memory_written);
+    connect(&debug_, &debug_controller::registers_ready,     this, &session_api::debug_registers_ready);
+    connect(&debug_, &debug_controller::registers_written,   this, &session_api::debug_registers_written);
+    connect(&debug_, &debug_controller::breakpoint_added,    this, &session_api::debug_breakpoint_added);
+    connect(&debug_, &debug_controller::breakpoint_removed,  this, &session_api::debug_breakpoint_removed);
+    connect(&debug_, &debug_controller::thread_stopped,      this, &session_api::debug_thread_stopped);
+    connect(&debug_, &debug_controller::running_changed,     this, &session_api::debug_running_changed);
+    connect(&debug_, &debug_controller::halt_finished,       this, &session_api::debug_halt_finished);
+    connect(&debug_, &debug_controller::process_changed,     this, &session_api::debug_process_changed);
     connect(&actions_,  &target_actions::log_message,             this, &session_api::log_message);
     connect(&conn_,     &tc::log_message,                         this, &session_api::log_message);
     connect(&conn_,     &tc::error_occurred,                      this, &session_api::error);
@@ -97,6 +110,7 @@ void target_session::wire() {
         QTimer::singleShot(0, this, &target_session::end_control_only_session);
     });
     connect(&session_, &session_controller::session_invalidated, this, &session_api::session_invalidated);
+    connect(&session_, &session_controller::session_invalidated, &debug_, &debug_controller::forget_state);
     connect(&session_, &session_controller::debug_agent_ready,   this, &session_api::debug_agent_ready);
     connect(&session_, &session_controller::sdk_version_received, this, &session_api::sdk_version_received);
     connect(&session_, &session_controller::status_message,      this, &session_api::status_message);

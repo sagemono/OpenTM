@@ -4,6 +4,9 @@ add_executable(tm_core_tests
     test_dfmp_codec.cpp
     test_drfp_codec.cpp
     test_dbgp_codec.cpp
+    test_debug_controller.cpp
+    test_ppc_disasm.cpp
+    test_ppc_stack.cpp
     test_tsmp_codec.cpp
     test_target_type.cpp
     test_sft_settings.cpp
