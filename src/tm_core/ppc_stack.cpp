@@ -39,6 +39,7 @@ std::vector<stack_frame> walk_stack(std::span<const std::byte> stack, std::uint6
 
         const auto return_address = read_be_u64_at(stack, stack_base, caller + stack_lr_save_offset);
         if (return_address == 0) break;
+        if (return_address > 0xffffffffull) break; //check later??
 
         out.push_back(stack_frame{return_address, caller});
         current = caller;

@@ -440,6 +440,13 @@ std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> 
     return body;
 }
 
+std::vector<std::byte> build_spu_group_body(std::uint32_t group_id) {
+    std::vector<std::byte> body;
+    body.reserve(4);
+    append_be_u32(body, group_id);
+    return body;
+}
+
 std::vector<std::byte> build_breakpoint_body(std::uint64_t address) {
     std::vector<std::byte> body;
     body.reserve(8);
@@ -517,6 +524,11 @@ std::optional<stop_event> parse_stop_event(const response& r) {
     stop_event out;
     out.reason = read_be_u32(p, 0);
 
+    if (is_spu_event(out.reason)) {
+        if (p.size() >= 8)  out.spu_group  = read_be_u32(p, 4);
+        if (p.size() >= 12) out.spu_thread = read_be_u32(p, 8);
+        return out;
+    }
     if (!is_ppu_thread_stop(out.reason) || p.size() < 32) return out;
     out.thread_id     = read_be_u64(p, 4);
     out.address       = read_be_u64(p, 16);

@@ -59,7 +59,15 @@ std::uint32_t debug_controller::send_dbgp(std::uint32_t cmd, const std::vector<s
 }
 
 void debug_controller::set_process(std::uint32_t pid) {
-    if (pid_ == pid) return;
+    if (pid_ == pid) {
+        if (attached_pid_ != pid) {
+            attach_process();
+        } else {
+            emit log_message(QStringLiteral("    -- process 0x%1 is already attached").arg(pid, 0, 16));
+            refresh_thread_list();
+        }
+        return;
+    }
     const auto was = pid_;
     pid_ = pid;
     forget_state();
@@ -75,7 +83,16 @@ void debug_controller::attach_process() {
     if (pid_ == 0) return;
     // shaped like stop_process, which also carries only the pid in the header
     emit log_message(QStringLiteral("    <- attach process 0x%1").arg(pid_, 0, 16));
-    send_dbgp(dbgshl::cmd::attach_process, {}, pending{kind::attach, 0, 0, 0});
+    if (send_dbgp(dbgshl::cmd::attach_process, {}, pending{kind::attach, 0, 0, 0}) != 0) {
+        attached_pid_ = pid_;
+    }
+    refresh_thread_list();
+}
+
+void debug_controller::refresh_thread_list() {
+    using namespace opentm::tm_core;
+    if (pid_ == 0) return;
+    send_dbgp(dbgshl::cmd::get_thread_list, {}, pending{kind::thread_list, 0, 0, 0});
 }
 
 void debug_controller::forget_state() {
@@ -84,6 +101,10 @@ void debug_controller::forget_state() {
     breakpoints_.clear();
     step_breakpoints_.clear();
     halted_threads_.clear();
+    attached_pid_ = 0;
+    reported_events_.clear();
+    spu_groups_.clear();
+    spu_resume_owed_ = false;
     set_running(false);
 }
 
@@ -156,11 +177,23 @@ void debug_controller::clear_breakpoint(quint64 address) {
 void debug_controller::resume(QList<quint64> thread_ids) {
     using namespace opentm::tm_core;
     if (thread_ids.isEmpty()) return;
+    if (spu_groups_.isEmpty()) {
+        refresh_thread_list();
+    }
     const std::vector<std::uint64_t> ids(thread_ids.begin(), thread_ids.end());
     const auto body = dbgp::build_thread_id_list_body(ids);
     if (send_dbgp(dbgshl::cmd::continue_ppu_thread, body, pending{kind::resume, 0, 0, 0}) != 0) {
         halted_threads_.clear();
         set_running(true);
+    }
+    if (spu_groups_.isEmpty()) {
+        // the list is still on its way so contineeu them the moment it lands
+        spu_resume_owed_ = true;
+        emit log_message(QStringLiteral("    -- waiting on the SPU group list to resume them"));
+    }
+    for (auto group : spu_groups_) {
+        emit log_message(QStringLiteral("    <- continue SPU group 0x%1").arg(group, 0, 16));
+        send_dbgp(dbgshl::cmd::continue_spu_group, dbgp::build_spu_group_body(group), pending{kind::spu_resume, group, 0, 0});
     }
 }
 
@@ -235,9 +268,6 @@ void debug_controller::finish_read_group(std::uint32_t group) {
         emit memory_read_failed(g.address, g.last_status);
         return;
     }
-    if (out.size() < static_cast<int>(g.length)) {
-        emit log_message(QStringLiteral("    -- read of 0x%1 gave %2 of %3 bytes").arg(g.address, 0, 16).arg(out.size()).arg(g.length));
-    }
     emit memory_ready(g.address, out);
 }
 
@@ -251,7 +281,6 @@ void debug_controller::on_memory_chunk(const opentm::tm_core::dbgp::response& r,
     const auto block = dbgp::parse_read_memory(r);
     if (!block || r.result_code != 0) {
         g.last_status = r.result_code;
-        emit log_message(QStringLiteral("    !! chunk 0x%1 failed: result=0x%2 payload=%3B").arg(p.address, 0, 16).arg(r.result_code, 8, 16, QChar('0')).arg(r.payload.size()));
     } else if (block->address != p.address) {
         emit log_message(QStringLiteral("    !! chunk echo mismatch: asked 0x%1, got 0x%2").arg(p.address, 0, 16).arg(block->address, 0, 16));
         g.chunks.insert(p.address, QByteArray(reinterpret_cast<const char*>(block->data.data()), static_cast<int>(block->data.size())));
@@ -266,8 +295,21 @@ void debug_controller::on_stop_event(const opentm::tm_core::dbgp::response& r) {
     const auto ev = dbgp::parse_stop_event(r);
     if (!ev) return;
 
+    if (dbgp::is_spu_event(ev->reason) && ev->spu_group != 0) {
+        if (!spu_groups_.contains(ev->spu_group)) {
+            spu_groups_.append(ev->spu_group);
+            if (running_) {
+                emit log_message(QStringLiteral("    <- continue new SPU group 0x%1").arg(ev->spu_group, 0, 16));
+                send_dbgp(dbgshl::cmd::continue_spu_group, dbgp::build_spu_group_body(ev->spu_group), pending{kind::spu_resume, ev->spu_group, 0, 0});
+            }
+        }
+    }
+
     if (!dbgp::is_ppu_thread_stop(ev->reason)) {
-        emit log_message(QStringLiteral("    >> debug event reason 0x%1 (not a thread stop)").arg(ev->reason, 0, 16));
+        if (!reported_events_.contains(ev->reason)) {
+            reported_events_.insert(ev->reason);
+            emit log_message(QStringLiteral("    >> debug event reason 0x%1 (not a thread stop; further ones not logged)").arg(ev->reason, 0, 16));
+        }
         return;
     }
 
@@ -334,6 +376,27 @@ void debug_controller::on_frame_received(opentm::tm_core::deci3_frame f) {
         break;
     case kind::clear_step_breakpoint:
         break;
+    case kind::spu_resume:
+        emit log_message(r->result_code == 0 ? QStringLiteral("    >> SPU group 0x%1 running").arg(p.address, 0, 16) : QStringLiteral("    !! SPU group 0x%1 would not continue (0x%2)").arg(p.address, 0, 16).arg(r->result_code, 8, 16, QChar('0')));
+        break;
+    case kind::thread_list: {
+        const auto list = dbgp::parse_thread_list(*r);
+        if (list) {
+            spu_groups_.clear();
+            for (auto g : list->spu_thread_group_ids) spu_groups_.append(g);
+            if (!spu_groups_.isEmpty()) {
+                emit log_message(QStringLiteral("    -- %1 SPU thread group(s) in this process").arg(spu_groups_.size()));
+            }
+            if (spu_resume_owed_ && !spu_groups_.isEmpty()) {
+                spu_resume_owed_ = false;
+                for (auto group : spu_groups_) {
+                    emit log_message(QStringLiteral("    <- continue SPU group 0x%1 (deferred)").arg(group, 0, 16));
+                    send_dbgp(dbgshl::cmd::continue_spu_group, dbgp::build_spu_group_body(group), pending{kind::spu_resume, group, 0, 0});
+                }
+            }
+        }
+        break;
+    }
     case kind::attach:
         emit log_message(r->result_code == 0 ? QStringLiteral("    >> attached to the process") : QStringLiteral("    !! attach refused (0x%1) - the body shape is probably wrong").arg(r->result_code, 8, 16, QChar('0')));
         break;

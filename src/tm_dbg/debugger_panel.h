@@ -3,6 +3,7 @@
 #include <tm_core/dbgp_codec.h>
 #include <tm_core/ppc_disasm.h>
 #include <tm_core/ppc_stack.h>
+#include <tm_core/elf_symbols.h>
 
 #include <QByteArray>
 #include <QHash>
@@ -31,6 +32,8 @@ class debugger_panel : public QWidget {
     Q_OBJECT
 public:
     explicit debugger_panel(QWidget* parent = nullptr);
+    bool load_symbols(const QString& path, QString* error = nullptr);
+    bool has_symbols() const { return !symbols_.empty(); }
 
     void set_supported(bool on, const QString& why = {});
 
@@ -48,6 +51,7 @@ public slots:
     void on_halt_finished(quint32 status);
     void on_session_invalidated();
     void on_process_changed(quint32 pid);
+    void release_process();
 
 signals:
     void log_message(QString line);
@@ -68,6 +72,7 @@ private:
     void build_ui();
     void refresh_actions();
     void go_to_address();
+    void show_code_at(quint64 address);
     void request_disassembly(quint64 address);
     void toggle_breakpoint_here();
     void step_into();
@@ -77,7 +82,7 @@ private:
     void edit_register(int row, int column);
     void thread_selected();
     void request_callstack();
-    void show_callstack(const QByteArray& stack);
+    void show_callstack(quint64 base, const QByteArray& stack);
     void stack_frame_activated();
     void go_to_memory();
     void show_memory(quint64 address, const QByteArray& data);
@@ -85,9 +90,11 @@ private:
     void redraw_disassembly();
     quint64 selected_address() const;
     QList<quint64> process_threads() const;
+    QString symbol_for(quint64 address) const;
     std::optional<quint64> step_destination(quint64 pc, bool over) const;
 
     opentm::tm_core::ppc_disassembler disasm_;
+    opentm::tm_core::symbol_table     symbols_;
 
     quint64                              code_base_ = 0;
     QByteArray                           code_;
@@ -101,16 +108,18 @@ private:
     QSet<quint64> breakpoints_;
     QList<quint64> all_threads_;
     bool    auto_halted_ = false;
+    int     halt_settle_retries_ = 0;
     quint64 reported_thread_ = 0;
     std::uint32_t reported_state_ = 0xffffffffu;
 
     opentm::tm_core::dbgp::ppu_registers regs_{};
     quint32 last_read_status_ = 0;
-    quint64 stack_base_ = 0;
-    bool    stack_pending_ = false;
+    QSet<quint64> stack_requests_;
+    QSet<quint64> memory_requests_;
     quint64 stack_top_ = 0;
-    quint64 memory_base_    = 0;
-    bool    memory_pending_ = false;
+    std::optional<opentm::tm_core::ppc_insn> pc_insn_;
+    quint64 focus_address_ = 0;
+
     bool                                 have_regs_ = false;
 
     QLineEdit*      address_edit_ = nullptr;

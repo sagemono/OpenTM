@@ -90,3 +90,12 @@ TEST_CASE("a walk stops rather than running off the end", "[stack]") {
         CHECK(frames[0].address == 0x48530);
     }
 }
+
+TEST_CASE("stack data that is not a return address ends the walk", "[stack]") {
+    fake_stack s(0x400);
+    s.frame(0xd0100000, 0xd0100100, 0x726b2f63656c6b00);
+
+    const auto frames = walk_stack(s.view(), s.base, 0x48530, 0xd0100000);
+    REQUIRE(frames.size() == 1);
+    CHECK(frames[0].address == 0x48530);
+}

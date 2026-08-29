@@ -289,6 +289,9 @@ std::optional<ppu_registers> parse_ppu_registers(const response& r);
 // in the frame header, so the body carries only the thread ids.
 std::vector<std::byte> build_thread_id_list_body(std::span<const std::uint64_t> thread_ids);
 
+// continue_spu_group (0x201) / stop_spu_group (0x205): a bare u32 group id, the same shape get_spu_group_info takes
+std::vector<std::byte> build_spu_group_body(std::uint32_t group_id);
+
 // set_ppu_breakpoint (0x502) and clear_ppu_breakpoint (0x503) both take a bare u64 address and echo it back
 std::vector<std::byte> build_breakpoint_body(std::uint64_t address);
 std::optional<std::uint64_t> parse_breakpoint_reply(const response& r);
@@ -321,13 +324,20 @@ struct stop_event {
     std::uint64_t thread_id = 0;
     std::uint64_t address   = 0;
     std::uint64_t stack_pointer = 0;
+    std::uint32_t spu_group  = 0;
+    std::uint32_t spu_thread = 0;
 };
+
+constexpr bool is_spu_event(std::uint32_t reason) noexcept {
+    return reason == 0x30u || reason == 0x32u || reason == 0x33u;
+}
 inline constexpr std::uint32_t stop_reason_breakpoint = 0x10u;  // 37 byte body
 inline constexpr std::uint32_t stop_reason_halted     = 0x1au;  // 37 byte body
 inline constexpr std::uint32_t event_thread           = 0x20u;  // 17 byte body
 inline constexpr std::uint32_t event_spu_image        = 0x30u;  // path string
 inline constexpr std::uint32_t event_spu_ids          = 0x32u;
 inline constexpr std::uint32_t event_spu_short        = 0x33u;
+inline constexpr std::uint32_t event_unknown_40       = 0x40u;
 
 // only these two carry a thread id, address and stack pointer
 constexpr bool is_ppu_thread_stop(std::uint32_t reason) noexcept {

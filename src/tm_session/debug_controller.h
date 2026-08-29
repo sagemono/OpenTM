@@ -45,6 +45,7 @@ public slots:
     void set_process(std::uint32_t pid);
 
     void attach_process();
+    void refresh_thread_list();
     void forget_state();
 
     void read_memory(quint64 address, quint32 length);
@@ -89,6 +90,8 @@ private:
         clear_breakpoint,
         clear_step_breakpoint,
         attach,
+        thread_list,
+        spu_resume,
         resume,
         halt,
         step,
@@ -119,6 +122,7 @@ private:
     opentm::tm_core::tcp_connection* connection_ = nullptr;
     session_controller*              session_    = nullptr;
     std::uint32_t                    pid_        = 0;
+    std::uint32_t                    attached_pid_ = 0;
     bool                             running_    = false;
     std::uint32_t                    next_group_ = 1;
 
@@ -127,6 +131,10 @@ private:
     QSet<quint64>                    breakpoints_;
     // which threads we stopped, so a step can put back exactly those. the kit acks a partial thread list and then ignores it
     QList<quint64>                   halted_threads_;
+    QSet<quint32>                    reported_events_;
+    QList<quint32>                   spu_groups_;
+    // a resume issued before the group list came back still owes the SPUs.,
+    bool                             spu_resume_owed_ = false;
     // step breakpoints are ours, not the users and they are cleared on the stop[
     QSet<quint64>                    step_breakpoints_;
 };

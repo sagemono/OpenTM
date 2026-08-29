@@ -437,3 +437,48 @@ TEST_CASE("the event channel carries more than thread stops", "[dbgp]") {
         CHECK(ev->address == 0);
     }
 }
+
+TEST_CASE("SPU events name the group they belong to", "[dbgp]") {
+    using namespace opentm::tm_core::dbgp;
+
+    auto event = [](std::initializer_list<int> bytes) {
+        response r;
+        for (auto b : bytes) r.payload.push_back(std::byte{static_cast<std::uint8_t>(b)});
+        return r;
+    };
+
+    SECTION("an image load carries the group and the thread") {
+        // start_program_execution.pcapng
+        // reason 0x30
+        const auto r = event({0x00,0x00,0x00,0x30,
+                              0x04,0x2f,0x01,0x00,
+                              0x00,0x2f,0x01,0x00,
+                              0x44,0x3a,0x5c,0x43});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(is_spu_event(ev->reason));
+        CHECK(ev->spu_group  == 0x042f0100);
+        CHECK(ev->spu_thread == 0x002f0100);
+        CHECK_FALSE(is_ppu_thread_stop(ev->reason));
+        CHECK(ev->address == 0);
+    }
+
+    SECTION("the short event carries a group and nothing else") {
+        const auto r = event({0x00,0x00,0x00,0x33, 0x04,0x46,0x01,0x00});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(ev->spu_group == 0x04460100);
+    }
+
+    SECTION("a PPU stop has no group") {
+        const auto r = event({0x00,0x00,0x00,0x10,
+                              0x00,0x00,0x00,0x00,0x01,0x00,0x00,0xb4,
+                              0x00,0x00,0x00,0x00,
+                              0x00,0x00,0x00,0x00,0x00,0x02,0xe1,0x18,
+                              0x00,0x00,0x00,0x00,0xd0,0x10,0x08,0xc0});
+        const auto ev = parse_stop_event(r);
+        REQUIRE(ev.has_value());
+        CHECK(ev->spu_group == 0);
+        CHECK(ev->address   == 0x0002e118);
+    }
+}

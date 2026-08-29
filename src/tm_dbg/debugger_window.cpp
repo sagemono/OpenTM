@@ -5,6 +5,10 @@
 #include <tm_core/target_type.h>
 
 #include <QApplication>
+#include <QCloseEvent>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QDir>
 #include <QDockWidget>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -51,6 +55,16 @@ void debugger_window::build_ui() {
 
     attach_btn_ = new QPushButton(tr("Attach"), this);
     bar->addWidget(attach_btn_);
+
+    auto* symbols_btn = new QPushButton(tr("Symbols..."), this);
+    symbols_btn->setToolTip(tr("Load function names from the .elf or the .self it was built into"));
+    bar->addWidget(symbols_btn);
+    connect(symbols_btn, &QPushButton::clicked, this, [this] {
+        const auto path = QFileDialog::getOpenFileName(
+            this, tr("Load symbols"), target_.file_server_dir,
+            tr("Executables (*.elf *.self *.prx *.sprx);;All files (*)"));
+        if (!path.isEmpty()) panel_->load_symbols(path);
+    });
     connect(attach_btn_, &QPushButton::clicked, this, &debugger_window::attach);
     connect(target_box_->lineEdit(), &QLineEdit::returnPressed, this, &debugger_window::attach);
 
@@ -69,6 +83,39 @@ void debugger_window::build_ui() {
     statusBar()->addPermanentWidget(state_);
 
     connect(panel_, &debugger_panel::log_message, this, &debugger_window::append_log);
+}
+
+void debugger_window::closeEvent(QCloseEvent* e) {
+    if (session_ && panel_) {
+        panel_->release_process();
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 250);
+    }
+    QMainWindow::closeEvent(e);
+}
+
+void debugger_window::try_symbols_for(const QString& kit_path) {
+    if (!panel_ || panel_->has_symbols() || kit_path.isEmpty()) return;
+
+    QStringList dirs;
+    if (!target_.file_server_dir.isEmpty()) dirs << target_.file_server_dir;
+    const auto local = qEnvironmentVariable("LOCALAPPDATA");
+    if (!local.isEmpty() && !target_.name.isEmpty()) {
+        dirs << QDir(local).absoluteFilePath(QStringLiteral("OpenTM/app_home/") + target_.name);
+    }
+    if (dirs.isEmpty()) {
+        append_log(tr("-- nowhere to look for symbols; use Symbols... to pick the .elf or .self"));
+        return;
+    }
+
+    const auto base = QFileInfo(kit_path).completeBaseName();
+    for (const auto& dir : dirs) {
+        for (const auto& suffix : {QStringLiteral(".elf"), QStringLiteral(".self")}) {
+            const QFileInfo candidate(QDir(dir), base + suffix);
+            if (!candidate.isFile()) continue;
+            if (panel_->load_symbols(candidate.absoluteFilePath())) return;
+        }
+    }
+    append_log(tr("-- no symbols for '%1' in %2. Use Symbols... to point at the .elf or the .self it was built into.").arg(base, dirs.join(QStringLiteral(", "))));
 }
 
 void debugger_window::append_log(const QString& line) {
@@ -272,6 +319,8 @@ void debugger_window::wire_session() {
                 s->debug_set_process(pid);
                 s->refresh_threads(pid);
                 d->on_process_ready(pid, processes.front().info);
+                self_path_ = QString::fromStdString(processes.front().info.self_path);
+                try_symbols_for(self_path_);
                 d->setEnabled(true);
                 set_state(tr("attached to pid 0x%1").arg(pid, 0, 16));
             });

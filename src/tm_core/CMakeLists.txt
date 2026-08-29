@@ -26,6 +26,8 @@ add_library(tm_core STATIC
     ppc_disasm.h
     ppc_stack.cpp
     ppc_stack.h
+    elf_symbols.cpp
+    elf_symbols.h
 )
 
 set_target_properties(tm_core PROPERTIES AUTOMOC ON)

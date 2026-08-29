@@ -26,6 +26,8 @@ public:
     ~debugger_window() override;
 
     void attach();
+    // resume the process rather than leaving it stopped behind 
+    void closeEvent(QCloseEvent* e) override;
     // ask the session server which consoles it already has open
     void discover_targets();
 
@@ -34,6 +36,7 @@ private:
     target_record selected_target() const;
     void wire_session();
     void ask_for_process_list();
+    void try_symbols_for(const QString& kit_path);
     void append_log(const QString& line);
     void set_state(const QString& text);
 
@@ -43,6 +46,7 @@ private:
     bool             ready_        = false;
     bool             asked_for_processes_ = false;
     std::uint32_t    pid_          = 0;
+    QString          self_path_;
     bool             warned_stale_ = false;
 
     debugger_panel*  panel_    = nullptr;
