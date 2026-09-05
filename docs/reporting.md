@@ -16,6 +16,30 @@ Almost every report so far has turned on one of these. Include them and you will
 
 Please attach the log rather than pasting it inline. They run to thousands of lines, and GitHub collapses long comments in a way that makes them hard to read.
 
+## If you are asked for a packet capture
+
+The wire log is almost always enough, and it is the safer thing to share: it carries the DECI3 conversation and nothing else. A packet capture is the raw network, so it carries whatever else was on the wire at the time.
+
+**Capture only the two machines.** Set a capture filter before you start recording:
+
+```
+host your.console.ip.address and host your.machines.ip.address
+```
+
+with your console's address and your PC's. In Wireshark that goes in the capture filter box on the start screen, not the display filter bar above the packet list.
+
+**A display filter does not change what gets saved.** `ip.addr == 10.0.0.236 and ip.addr == 10.0.0.141` narrows what you are looking at, but the file still holds every packet the interface saw. If you have already recorded unfiltered, apply the display filter and then use **File > Export Specified Packets...** with **All packets / Displayed** selected, which writes out only the matching packets.
+
+This matters. An unfiltered capture on a home network picks up the MAC address of every device on it, your public IP address, and the identifiers services such as Syncthing broadcast about themselves. A capture filtered to the two hosts contains two MAC addresses and two private IPs.
+
+Even filtered, a capture still carries:
+
+* the console's MAC address, in the ethernet headers and again as text in the status reply
+* paths on your PC, from `/app_home/` file serving, which includes your Windows username if your build lives under `C:\Users\`
+* anything the running program printed to TTY
+
+None of that is usually sensitive, but it is worth knowing what you are publishing before you attach the file.
+
 ## Version, exactly
 
 **Help > About OpenTM** has a **Copy Version Info** button. Paste what it gives you. It carries the version, commit, build date, Qt version and OS, which is faster and more reliable than trying to remember which build you are on.
