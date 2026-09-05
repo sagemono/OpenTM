@@ -33,7 +33,7 @@ load_executable_dialog::load_executable_dialog(const QString& default_app_home, 
         auto* row = new QHBoxLayout(host_file_row_);
         row->setContentsMargins(0, 0, 0, 0);
         file_path_edit_ = new QLineEdit(this);
-        file_path_edit_->setPlaceholderText(tr("Path to .self / .elf on this machine"));
+        file_path_edit_->setPlaceholderText(tr("Path to .self / .elf / .bin on this machine"));
         browse_btn_ = new QPushButton(tr("&Browse..."), this);
         row->addWidget(new QLabel(tr("File name:"), this), 0);
         row->addWidget(file_path_edit_, 1);
@@ -258,7 +258,7 @@ void load_executable_dialog::on_home_use_elf_toggled(bool checked) {
 }
 
 void load_executable_dialog::on_browse_file() {
-    const auto file = QFileDialog::getOpenFileName(this, tr("Load and Run Executable"), file_path_edit_->text(), tr("SELF Files (*.self);;ELF Files (*.elf);;All Files (*)"));
+    const auto file = QFileDialog::getOpenFileName(this, tr("Load and Run Executable"), file_path_edit_->text(), tr("SELF Files (*.self);;ELF Files (*.elf);;EBOOT Files (EBOOT.BIN eboot.bin);;All Files (*)"));
     if (!file.isEmpty()) file_path_edit_->setText(file);
 }
 
