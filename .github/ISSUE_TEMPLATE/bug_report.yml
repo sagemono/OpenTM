@@ -1,0 +1,74 @@
+name: Bug report
+description: Something OpenTM does wrong, or does not do at all.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. [docs/reporting.md](../blob/main/docs/reporting.md) explains where the wire log lives and why the questions below are asked.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: console
+    attributes:
+      label: Console
+      options:
+        - DECR devkit
+        - Retail or non-retail console on DEX firmware
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: target
+    attributes:
+      label: Target type and port
+      description: >
+        As shown in Target Properties. A DECR devkit answers on 8530 and a DEX console on 1000, and a mismatch looks like a dozen other problems.
+      placeholder: PS3_DBG_DEX, port 1000
+    validations:
+      required: true
+
+  - type: dropdown
+    id: vendor
+    attributes:
+      label: Does the official target manager do the same thing?
+      description: >
+        The most decisive question there is, if the vendor tool fails the same way against the same console, the fault is very likely the console or its firmware rather than OpenTM. "No way to test" is a perfectly good answer.
+      options:
+        - "Yes, it fails the same way"
+        - "No, it works there"
+        - "No way to test"
+    validations:
+      required: true
+
+  - type: textarea
+    id: version
+    attributes:
+      label: Version
+      description: "Help > About OpenTM, then the Copy Version Info button. If you built it yourself, say which branch."
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: log
+    attributes:
+      label: Wire log
+      description: >
+        Right-click inside the Wire Log dock, choose "Save to File...", and drag the file in here. Please attach rather than paste, these run to thousands of lines. This is usually enough on its own to find the cause.
+
+  - type: checkboxes
+    id: stale
+    attributes:
+      label: Before reporting
+      options:
+        - label: >
+            I quit OpenTM from the tray icon (not just the window) before testing this build, the session server outlives the window, and a stale one makes fixes look like they never landed.

@@ -50,9 +50,14 @@ To build from source, see [Building](docs/building.md).
 | | |
 |---|---|
 | [Usage](docs/usage.md) | the GUI, the CLI, and how a console is shared |
+| [Reporting a problem](docs/reporting.md) | what to include so a bug can be diagnosed |
 | [Building](docs/building.md) | building from source on Windows and Linux |
 | [Internals](docs/internals.md) | how the code is put together, and where to add things |
 | [Server protocol](docs/rpc-protocol.md) | driving OpenTM from your own tools |
+
+## Reporting a problem
+
+Open an [issue](../../issues) - please not chat, since these usually take more than one round trip and a thread that is still there next week is worth a lot. [Reporting a problem](docs/reporting.md) covers what to include; the short version is the wire log (right-click the Wire Log dock, Save to File), your target type and port, and whether the official tool does the same thing.
 
 ## Relationship to vendor tooling
 

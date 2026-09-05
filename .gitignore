@@ -17,6 +17,7 @@ __pycache__/
 !/docs/usage.md
 !/docs/internals.md
 !/docs/building.md
+!/docs/reporting.md
 
 *.pcap
 *.pcapng
