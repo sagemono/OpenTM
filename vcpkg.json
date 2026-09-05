@@ -1,6 +1,6 @@
 {
   "name": "opentm",
-  "version-string": "0.0.2",
+  "version-string": "0.0.3",
   "description": "Cleanroom reimplementation of the PS3 Target Manager.",
   "$comment": [
     ""
