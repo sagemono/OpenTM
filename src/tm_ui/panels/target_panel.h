@@ -50,6 +50,7 @@ signals:
     void search_requested();
     void context_menu_requested(QPoint global_pos, bool has_target);
     void target_removed(QString id);
+    void target_record_changed(target_record r);
     void xmb_apply_requested(QString host_path, quint32 file_size);
     void xmb_refresh_requested();
 

@@ -688,6 +688,8 @@ void target_panel::set_target_row(const QPersistentModelIndex& idx, const target
             model_->invisibleRootItem()->removeRow(parent_item->row());
         }
     }
+
+    emit target_record_changed(r);
 }
 
 void target_panel::load_targets() {

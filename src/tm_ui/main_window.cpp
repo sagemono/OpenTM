@@ -749,6 +749,12 @@ void main_window::build_toolbar() {
 void main_window::build_target_dock() {
     target_panel_ = new target_panel(this);
     connect(target_panel_, &target_panel::selection_changed, this, &main_window::on_target_selection_changed);
+    connect(target_panel_, &target_panel::target_record_changed, this,
+            [this](const target_record& r) {
+        if (const auto it = slots_.constFind(r.id); it != slots_.constEnd()) {
+            (*it)->session->set_target(r);
+        }
+    });
     connect(target_panel_, &target_panel::context_menu_requested, this, &main_window::on_target_context_menu);
     connect(target_panel_, &target_panel::target_removed, this, &main_window::close_slot);
     connect(target_panel_, &target_panel::log_message, this, &main_window::log_wire);
