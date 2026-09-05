@@ -164,6 +164,7 @@ main_window::target_slot* main_window::slot_for(const target_record& r, const QP
 
     connect(slot->cp, &cp_panel::log_message, this, &main_window::log_wire);
     wire_slot_panels(slot);
+    s->set_target(r);
     return slot;
 }
 
